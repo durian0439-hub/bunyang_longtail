@@ -6,11 +6,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+import bunyang_longtail.naver_bundle_publish as target  # noqa: E402
 from bunyang_longtail.naver_bundle_publish import (  # noqa: E402
     _build_gpt_publish_image_plans,
     build_publish_bundle,
@@ -86,6 +89,18 @@ SPARSE_CASHFLOW_ARTICLE = """# 계약금 중도금 잔금 계약금이 빠듯할
 
 
 class TestNaverBundlePublish(unittest.TestCase):
+    def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "blank.png"
+            Image.new("RGB", (800, 800), (250, 250, 250)).save(path)
+            self.assertTrue(target._is_visually_blank_publish_image(path))
+
+    def test_is_visually_blank_publish_image_allows_chalkboard_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "chalk.png"
+            Image.new("RGB", (800, 800), (20, 60, 40)).save(path)
+            self.assertFalse(target._is_visually_blank_publish_image(path))
+
     def test_parse_publish_sections_returns_expected_order(self) -> None:
         original_title, sections = parse_publish_sections(SAMPLE_ARTICLE, title_hint="1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까")
         self.assertEqual(original_title, "1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까")
@@ -117,7 +132,7 @@ class TestNaverBundlePublish(unittest.TestCase):
             self.assertEqual(len(meta["images"]), 4)
             self.assertEqual(meta["image_provider"], "local")
             self.assertTrue(all(Path(path).is_absolute() for path in meta["images"]))
-            self.assertIn("30대 맞벌이라고 청약 1순위가 바로 막히는 것은 아닙니다.", bundle.markdown)
+            self.assertIn("30대 맞벌이 청약은 막연히 불리한 게임이 아니라, 어떤 공급에서 판단하느냐에 따라 결과가 크게 갈립니다.", bundle.markdown)
             self.assertIn("## 청약 1순위 FAQ", bundle.markdown)
 
     def test_parse_publish_sections_supports_markdown_headings(self) -> None:
@@ -172,10 +187,8 @@ class TestNaverBundlePublish(unittest.TestCase):
         self.assertEqual(plans[-1].slot, "청약 1순위 신청 전 체크리스트::before")
         self.assertEqual(plans[0].image_role, "thumbnail")
         self.assertIn("Use the uploaded image as a visual reference for mood and composition.", plans[1].prompt_text)
-        self.assertIn("흐름 분석", plans[1].prompt_text)
-        self.assertIn("핵심 구조 요약", plans[1].prompt_text)
-        self.assertIn("핵심 포인트", plans[1].prompt_text)
-        self.assertIn("결론", plans[1].prompt_text)
+        self.assertIn("Create a Korean summary board", plans[1].prompt_text)
+        self.assertIn("Do not use a 4-panel grid", plans[1].prompt_text)
         self.assertIn("public service campaign poster", plans[1].prompt_text)
 
     def test_build_gpt_publish_image_plans_cashflow_uses_chalkboard_prompt(self) -> None:
@@ -185,8 +198,9 @@ class TestNaverBundlePublish(unittest.TestCase):
         self.assertGreaterEqual(len(plans), 6)
         self.assertEqual(plans[0].slot, "lead")
         self.assertTrue(any(slot.endswith("::before") for slot in [plan.slot for plan in plans]))
-        self.assertTrue(any('Include these Korean headings exactly: "흐름 분석" "핵심 구조 요약" "핵심 포인트" "결론".' in plan.prompt_text for plan in plans[1:]))
         self.assertTrue(any("Use the uploaded image as a visual reference for mood and composition." in plan.prompt_text for plan in plans[1:]))
+        self.assertTrue(any("Do not use a 4-panel grid" in plan.prompt_text or "Do not use repeated equal-size boxes" in plan.prompt_text for plan in plans[1:]))
+        self.assertTrue(any("Create a Korean flowchart board" in plan.prompt_text or "Create a Korean checklist board" in plan.prompt_text or "Create a Korean comparison board" in plan.prompt_text for plan in plans[1:]))
 
 
 if __name__ == "__main__":

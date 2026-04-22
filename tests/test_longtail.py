@@ -220,6 +220,7 @@ class LongtailPlannerTest(unittest.TestCase):
             bundle_id=first["bundle"]["id"],
             image_roles=["thumbnail", "summary_card"],
             executor_mode="mock",
+            text_route="reuse_existing",
         )
         self.assertEqual(result["mode"], "mock_complete")
         self.assertTrue(result["text_result"]["resumed"])
@@ -298,6 +299,7 @@ class LongtailPlannerTest(unittest.TestCase):
                 bundle_id=text_job["bundle_id"],
                 image_roles=["thumbnail"],
                 executor_mode="playwright",
+                text_route="reuse_existing",
                 image_fallback="local_canvas",
                 artifact_root=Path(self.tmpdir.name) / "local_fallback_artifacts",
             )
@@ -494,11 +496,16 @@ class LongtailPlannerTest(unittest.TestCase):
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
         class DummyImageLocator:
-            def screenshot(self, path: str) -> None:
-                Path(path).write_bytes(b"PNG")
+            def get_attribute(self, name: str) -> str:
+                if name == "src":
+                    return "data:image/png;base64,iVBORw0KGgo="
+                return ""
 
         class DummyPage:
             def wait_for_timeout(self, _ms: int) -> None:
+                return None
+
+            def evaluate(self, *_args, **_kwargs):
                 return None
 
         with patch("bunyang_longtail.gpt_web._last_locator", return_value=None), patch(
@@ -523,6 +530,7 @@ class LongtailPlannerTest(unittest.TestCase):
             )
         self.assertEqual(result["file_path"], str(output_path))
         self.assertTrue(output_path.exists())
+        self.assertGreater(output_path.stat().st_size, 0)
 
     def test_summary_source_uses_article_body_when_excerpt_is_placeholder(self) -> None:
         article_markdown = "# 제목\n\n상단 요약\n\n30대 맞벌이도 일반공급 1순위는 충분히 가능할 수 있습니다.\n\nFAQ"

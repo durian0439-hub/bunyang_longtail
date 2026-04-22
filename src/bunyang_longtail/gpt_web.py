@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -877,6 +878,58 @@ def _wait_for_text_response(
 
 
 
+def _save_generated_image(page: Any, image_locator: Any, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        src = image_locator.get_attribute('src') or ''
+    except Exception:
+        src = ''
+
+    if src.startswith('data:image'):
+        _, encoded = src.split(',', 1)
+        output_path.write_bytes(base64.b64decode(encoded))
+        return
+
+    if src.startswith('blob:'):
+        payload = page.evaluate(
+            """async (src) => {
+                const res = await fetch(src);
+                const blob = await res.blob();
+                const buffer = await blob.arrayBuffer();
+                const bytes = Array.from(new Uint8Array(buffer));
+                return { bytes };
+            }""",
+            src,
+        )
+        if payload and payload.get('bytes'):
+            output_path.write_bytes(bytes(payload['bytes']))
+            return
+        raise RuntimeError(f'blob 원본 다운로드 실패: {src}')
+
+    if src.startswith('http://') or src.startswith('https://') or '/backend-api/' in src:
+        try:
+            payload = page.evaluate(
+                """async (src) => {
+                    const res = await fetch(src, { credentials: 'include' });
+                    if (!res.ok) {
+                        throw new Error(`fetch failed: ${res.status}`);
+                    }
+                    const buffer = await res.arrayBuffer();
+                    const bytes = Array.from(new Uint8Array(buffer));
+                    return { bytes };
+                }""",
+                src,
+            )
+            if payload and payload.get('bytes'):
+                output_path.write_bytes(bytes(payload['bytes']))
+                return
+        except Exception as exc:
+            raise RuntimeError(f'브라우저 세션 다운로드 실패: {src}, {exc}') from exc
+
+    raise RuntimeError(f'다운로드 가능한 원본 이미지 src를 찾지 못했습니다: {src}')
+
+
+
 def _wait_for_image_response(
     page: Any,
     *,
@@ -905,9 +958,8 @@ def _wait_for_image_response(
         visible_image = _last_visible(page, IMAGE_SELECTORS)
         image_locator = visible_image[1] if visible_image else None
         if image_locator is not None and (has_new_image or response_changed) and not _has_stop_button(page):
-            output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                image_locator.screenshot(path=str(output_path))
+                _save_generated_image(page, image_locator, output_path)
             except Exception as exc:
                 raise GptWebExecutionError(
                     f"생성된 이미지를 저장하지 못했습니다: {exc}",
@@ -925,9 +977,8 @@ def _wait_for_image_response(
     visible_image = _last_visible(page, IMAGE_SELECTORS)
     image_locator = visible_image[1] if visible_image else None
     if image_locator is not None and _has_new_generated_image(seen_before, current_image_sources) and not _has_stop_button(page):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            image_locator.screenshot(path=str(output_path))
+            _save_generated_image(page, image_locator, output_path)
         except Exception as exc:
             raise GptWebExecutionError(
                 f"생성된 이미지를 저장하지 못했습니다: {exc}",

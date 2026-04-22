@@ -6,6 +6,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass
+from statistics import mean
 from pathlib import Path
 from typing import Any
 
@@ -454,7 +455,16 @@ def build_publish_title(original_title: str) -> str:
         return "기관추천 특별공급 배우자 주택 이력 있을 때, 노부모 부양 세대 가능 여부 정리"
     if "계약금 중도금 잔금" in title:
         return "분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?"
-    return title if "청약" in title else f"{title} | 분양청약 how to 정리"
+    title = title.replace('입주자모집공고과', '입주자모집공고와')
+    title = title.replace('거주의무과', '거주의무와')
+    title = title.replace(' | 분양청약 how to 정리', '')
+    title = title.replace('분양청약 how to 정리', '')
+    title = title.replace('확인포인트', '')
+    title = title.replace('핵심 포인트', '')
+    title = title.replace('체크 포인트', '')
+    title = title.replace('탈락 포인트', '')
+    title = ' '.join(title.split())
+    return title[:60].rstrip()
 
 
 def _intro_text(sections: list[PublishSection]) -> str:
@@ -1083,14 +1093,17 @@ def _thumbnail_prompt_text(title: str, sections: list[PublishSection]) -> str:
     return (
         "Use the uploaded image as a visual reference for mood and composition. "
         "Create a high-quality Korean chalkboard thumbnail in a realistic classroom style. "
-        "Dark green blackboard, front view, realistic chalk dust, soft handwritten chalk typography, clean and premium composition. "
+        "A dark green blackboard must fill the whole frame edge to edge. No white poster background, no white card, no empty light gray square, no paper sheet. "
+        "Front view, realistic chalk dust, thick handwritten chalk typography, strong contrast, clean and premium composition. "
         "Make it feel cute, smart, organized, and easy to read at a glance. "
-        "One strong focal point only, lots of empty space, very large readable Korean title, very short Korean phrases only. "
-        "Place one centered main title, two small support chips, and tiny chalk doodles like arrows, stars, underline strokes, and a small house or check icon. "
+        "Place one very large Korean title or hook directly on the chalkboard, plus one or two tiny support chips. "
+        "The title text should actually appear on the image in Korean, large and readable. "
+        "Use very short Korean wording only, 1 to 6 words per text block, max 3 text blocks total. "
+        "Add tiny chalk doodles like arrows, stars, underline strokes, and a small house or check icon. "
+        "Add a very small watermark text '데일리어셈블' near the upper right corner, placed diagonally, subtle but readable. "
         "Color palette: white, pink, yellow, sky blue, mint green on deep green chalkboard. "
         f"핵심 주제는 '{title}' 이고, 강조 포인트는 {chips} 입니다. 핵심 요약은 '{summary}' 입니다. "
-        "텍스트는 최대 3개 덩어리만 쓰고, 각 덩어리는 1~3단어만 사용해 주세요. "
-        "Negative prompt: public service campaign poster, government PSA, corporate ad banner, garbled Korean text, random symbols, extra English letters, cluttered layout, tiny text, low contrast, blurry chalk, warped perspective, printed poster font, overdecorated composition."
+        "Negative prompt: white background, white card, blank poster, empty square, washed out board, public service campaign poster, government PSA, corporate ad banner, garbled Korean text, random symbols, extra English letters, cluttered layout, tiny text, low contrast, blurry chalk, warped perspective, printed poster font, overdecorated composition."
     )
 
 
@@ -1107,23 +1120,73 @@ SECTION_VISUAL_KIND_MAP = {
 
 
 
-def _chalkboard_explainer_prompt(*, title: str, focus_title: str, detail_lines: list[str]) -> str:
+def _visual_prompt_style(raw_heading: str, kind: str) -> str:
+    if kind == "summary":
+        return (
+            "Create a Korean summary board with three oversized takeaway cards, one short headline, and one small conclusion chip. "
+            "Do not use a 4-panel grid. Use asymmetric spacing and make the middle takeaway visually dominant. "
+        )
+    if kind == "flow":
+        return (
+            "Create a Korean flowchart board. Show a left-to-right or top-to-bottom decision flow with arrows, circles, and only 3 or 4 steps. "
+            "Do not use repeated equal-size boxes. The image must read like a process, not a poster grid. "
+        )
+    if kind == "comparison":
+        return (
+            "Create a Korean comparison board with two large side-by-side cards. Left is one option, right is the other option. "
+            "Use contrast colors and a clear versus structure. Do not add extra mini boxes beyond the two main cards and one small verdict strip. "
+        )
+    if kind in {"checklist", "mini_checklist"}:
+        return (
+            "Create a Korean checklist board with large checkboxes, short action items, and one highlighted warning note. "
+            "Make it feel like a practical inspection sheet, not an infographic poster. "
+        )
+    if kind == "scenario":
+        return (
+            "Create a Korean scenario board. Show one realistic case as a branching path: condition, result, next action. "
+            "At the bottom, add one concrete action strip telling the reader what to do next. "
+        )
+    if kind == "faq":
+        return (
+            "Create a Korean Q&A board with one big question bubble and 2 or 3 short answer chips. "
+            "It should feel conversational, not like a repeated template. "
+        )
+    if kind == "conclusion":
+        return (
+            "Create a Korean CTA board. One large closing headline, three short action boxes, and one strong final reminder. "
+            "It should feel like an action prompt, not a summary poster. "
+        )
+    if kind == "focus":
+        return (
+            "Create a Korean spotlight card with one dominant metric or rule, one short explanation, and one tiny note. "
+            "Keep the layout minimal and centered. "
+        )
+    return (
+        "Create a Korean explainer board with one dominant headline, one main diagram, and one short takeaway strip. "
+        "Avoid any repeated 4-box layout. "
+    )
+
+
+
+def _chalkboard_explainer_prompt(*, title: str, focus_title: str, detail_lines: list[str], kind: str) -> str:
     normalized_details = [_trim_text(_clean(line), max_len=28) for line in detail_lines if _clean(line)]
     details_text = " / ".join(normalized_details[:4]) or _trim_text(title, max_len=60)
+    style = _visual_prompt_style(focus_title, kind)
     return (
         "Use the uploaded image as a visual reference for mood and composition. "
         "Create a high-quality Korean chalkboard infographic in a realistic classroom style. "
-        "Dark green blackboard, front view, realistic chalk dust, handwritten chalk typography, neat educational poster design. "
+        "A dark green blackboard must fill the whole frame edge to edge. No white poster background, no white card, no blank square, no empty light background. "
+        "Front view, realistic chalk dust, handwritten chalk typography, neat educational poster design, thick chalk lines, strong contrast. "
         "Keep one image focused on only one micro-topic. Reduce the amount of information per image and maximize visibility. "
-        "Use much larger chalk text, stronger contrast, fewer boxes, fewer arrows, and lots of empty space. "
-        "Composition: - Big centered Korean title at the top - Left column with a very simple numbered step or dialogue box - Right upper section with one minimal flow diagram using colored circles - Middle section with one or two comparison boxes only - Bottom section with 2 or 3 key bullet points and one highlighted conclusion box - Small chalk doodles such as hearts, stars, arrows, and underline strokes - Chalk tray at the bottom with pastel chalk pieces. "
+        "Use much larger chalk text, fewer boxes, fewer arrows, and lots of empty space. "
+        f"{style}"
         "Typography: - Large readable Korean chalk headings - Only short Korean phrases, not long paragraphs - Accurate spacing and line breaks - Handwritten chalk style, soft but legible. "
+        "Add a very small watermark text '데일리어셈블' near the upper right corner, placed diagonally, subtle but readable. "
         "Color palette: white, pink, yellow, sky blue, mint green on deep green chalkboard. "
         "Mood: smart, cute, analytical, organized, visually satisfying. "
-        'Include these Korean headings exactly: "흐름 분석" "핵심 구조 요약" "핵심 포인트" "결론". '
         f"주제 설명 ({title}). 이번 이미지의 중심 주제는 '{focus_title}' 입니다. 꼭 반영할 핵심 내용은 {details_text} 입니다. "
-        "각 박스에는 1~3단어짜리 짧은 한국어만 넣고, 전체 텍스트 덩어리는 4개 이내로 제한해 주세요. "
-        "Negative prompt: public service campaign poster, government PSA, corporate ad banner, garbled Korean text, random symbols, extra English letters, messy composition, cluttered layout, tiny text, low contrast, blurry chalk, warped perspective, printed poster font, overdecorated layout."
+        "각 텍스트 블록은 1~6단어의 짧은 한국어로 제한하고, 레이아웃은 이 이미지 종류에 맞게 서로 다르게 구성해 주세요. "
+        "Negative prompt: white background, white card, blank poster, empty square, washed out board, public service campaign poster, government PSA, corporate ad banner, garbled Korean text, random symbols, extra English letters, repeated 4-panel layout, messy composition, cluttered layout, tiny text, low contrast, blurry chalk, warped perspective, printed poster font, overdecorated layout."
     )
 
 
@@ -1134,8 +1197,9 @@ def _section_visual_kind(raw_heading: str) -> str:
 
 
 def _section_prompt_text(title: str, section: PublishSection) -> str:
+    kind = _section_visual_kind(section.raw_heading)
     detail_lines = [section.publish_heading, *_simple_rows_from_lines(section.lines, limit=4)]
-    return _chalkboard_explainer_prompt(title=title, focus_title=section.publish_heading, detail_lines=detail_lines)
+    return _chalkboard_explainer_prompt(title=title, focus_title=section.publish_heading, detail_lines=detail_lines, kind=kind)
 
 
 
@@ -1143,8 +1207,9 @@ def _spec_prompt_text(title: str, spec: dict[str, Any]) -> str:
     headers = [_clean(header) for header in spec.get("headers", [])]
     rows = [" | ".join(_clean(cell) for cell in row) for row in spec.get("rows", [])[:3]]
     label = _clean(spec.get("label")) or "보조 설명"
+    kind = "mini_checklist" if "체크리스트" in label else "focus"
     detail_lines = [label, *headers, *rows]
-    return _chalkboard_explainer_prompt(title=title, focus_title=label, detail_lines=detail_lines)
+    return _chalkboard_explainer_prompt(title=title, focus_title=label, detail_lines=detail_lines, kind=kind)
 
 
 
@@ -1242,7 +1307,12 @@ def _render_gpt_publish_assets(*, title: str, sections: list[PublishSection], ou
             if exc.artifact_dir:
                 detail += f" (artifact: {exc.artifact_dir})"
             raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, {detail}") from exc
-        assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=str(Path(execution["file_path"]).resolve())))
+        resolved_path = str(Path(execution["file_path"]).resolve())
+        if _is_visually_blank_publish_image(resolved_path):
+            raise RuntimeError(
+                f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, 흰색에 가까운 빈 이미지로 판정됨 ({resolved_path})"
+            )
+        assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=resolved_path))
     return assets
 
 
@@ -1259,6 +1329,29 @@ def _ensure_publish_asset_min_side(asset_path: str | Path, min_side_px: int) -> 
     except Exception:
         return str(path.resolve())
     return str(path.resolve())
+
+
+def _sample_brightness(rgb: tuple[int, int, int]) -> float:
+    return (float(rgb[0]) + float(rgb[1]) + float(rgb[2])) / 3.0
+
+
+def _is_visually_blank_publish_image(asset_path: str | Path) -> bool:
+    path = Path(asset_path)
+    try:
+        with Image.open(path) as image:
+            rgb = image.convert("RGB")
+            width, height = rgb.size
+            points = [
+                (width // 2, height // 2),
+                (width // 4, height // 4),
+                (width * 3 // 4, height // 4),
+                (width // 4, height * 3 // 4),
+                (width * 3 // 4, height * 3 // 4),
+            ]
+            samples = [_sample_brightness(rgb.getpixel((max(0, min(x, width - 1)), max(0, min(y, height - 1))))) for x, y in points]
+            return mean(samples) >= 242.0
+    except Exception:
+        return False
 
 
 
@@ -1386,17 +1479,17 @@ def render_publish_assets(*, title: str, sections: list[PublishSection], output_
 def _section_lines_for_publish(title: str, section: PublishSection) -> list[str]:
     if _topic_kind(title) == "ranking" and section.raw_heading == "FAQ":
         return [
-            "Q1. 맞벌이 소득이 높으면 청약 1순위는 아예 불가능한가요?",
-            "일반공급은 통장과 거주요건 중심이라 별도로 가능할 수 있습니다. 다만 특별공급은 소득과 자산 기준에서 갈릴 수 있습니다.",
+            "Q1. 맞벌이 합산 소득이 높으면 어디서 먼저 탈락하나요?",
+            "일반공급은 통장과 거주요건이 먼저라 바로 탈락으로 이어지지 않을 수 있습니다. 반대로 신혼부부나 생애최초 특별공급은 소득과 자산 기준에서 먼저 걸릴 가능성이 큽니다.",
             "",
-            "Q2. 신혼부부 특별공급이 안 되면 일반공급도 못 넣나요?",
-            "그렇지 않습니다. 특별공급 불가와 일반공급 1순위 불가는 같은 말이 아닙니다.",
+            "Q2. 특별공급이 어렵다면 다음 선택지는 무엇인가요?",
+            "이 경우에는 일반공급 1순위 가능성을 바로 따져보는 것이 현실적입니다. 통장 가입기간, 예치금, 지역 우선순위를 먼저 확인하시면 됩니다.",
             "",
-            "Q3. 30대 맞벌이 청약에서 먼저 볼 것은 통장인가요, 소득인가요?",
-            "일반공급이면 통장과 거주요건을 먼저 보시고, 특별공급이면 소득과 자산을 먼저 보시는 것이 빠릅니다.",
+            "Q3. 청약통장은 충분한데 세대 조건이 애매하면 어떻게 하나요?",
+            "세대주 요건, 무주택 판정, 재당첨 제한을 공고문 기준으로 다시 보셔야 합니다. 이 부분은 단지마다 달라서 마지막에 공고문 확인이 필수입니다.",
             "",
-            "Q4. 세대주가 아니면 청약 1순위가 안 되나요?",
-            "공급유형과 공고문에 따라 다릅니다. 세대주 요건이 필요한지부터 먼저 확인하셔야 합니다.",
+            "Q4. 신청 직전에 가장 먼저 해야 할 한 가지는 무엇인가요?",
+            "공급유형을 일반공급과 특별공급으로 나누고, 우리 부부가 어느 쪽에서 유리한지 먼저 결정하시는 것이 가장 빠릅니다. 그 다음에 통장이나 소득 기준을 확인하셔야 판단이 흔들리지 않습니다.",
         ]
 
     out: list[str] = []
@@ -1434,12 +1527,12 @@ def _lead_blocks(title: str, sections: list[PublishSection]) -> list[str]:
         ]
     if topic == "ranking":
         return [
-            "30대 맞벌이라고 청약 1순위가 바로 막히는 것은 아닙니다. 일반공급은 통장과 거주요건, 특별공급은 소득과 자산에서 갈립니다.",
+            "30대 맞벌이 청약은 막연히 불리한 게임이 아니라, 어떤 공급에서 판단하느냐에 따라 결과가 크게 갈립니다.",
             "",
             "이 글에서 바로 가져가실 것 3가지",
-            "- 일반공급과 특별공급을 어떻게 나눠 봐야 하는지",
-            "- 30대 맞벌이 청약에서 어디서 가장 자주 막히는지",
-            "- 신청 전 무엇을 먼저 확인해야 실수가 줄어드는지",
+            "- 일반공급과 특별공급을 어디서 갈라서 봐야 하는지",
+            "- 맞벌이 부부가 실제로 가장 자주 막히는 지점이 어디인지",
+            "- 신청 직전에 무엇부터 확인해야 실수가 줄어드는지",
         ]
     return [
         "청약 판단을 빨리 끝내려면 조건을 한 줄씩 분리해서 보셔야 합니다.",
@@ -1448,7 +1541,31 @@ def _lead_blocks(title: str, sections: list[PublishSection]) -> list[str]:
     ]
 
 
-def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset]) -> str:
+BOOK_LINK_URL = "https://link.coupang.com/a/esfszm"
+BOOK_NOTICE_TEXT = '"이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."'
+
+
+def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dict[str, str]] | None = None) -> None:
+    lines.append("---")
+    lines.append("")
+    lines.append(BOOK_NOTICE_TEXT)
+    if BOOK_LINK_URL:
+        lines.append(BOOK_LINK_URL)
+    lines.append("")
+    lines.append("관련 글")
+    if related_links:
+        for item in related_links:
+            title = (item.get("title") or "이전 글").strip()
+            url = (item.get("url") or "").strip()
+            if not url:
+                continue
+            lines.append(f"- [{title}]({url})")
+    else:
+        lines.append("- 다음 글부터 관련 글이 자동으로 연결됩니다.")
+    lines.append("")
+
+
+def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset], related_links: list[dict[str, str]] | None = None) -> str:
     lines: list[str] = [f"# {title}", ""]
 
     slot_to_indexes: dict[str, list[int]] = {}
@@ -1483,6 +1600,7 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
 
     lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
     lines.append("")
+    _append_book_and_related_blocks(lines, related_links=related_links)
     return "\n".join(lines).strip() + "\n"
 
 
@@ -1509,22 +1627,38 @@ def default_tags(title: str) -> list[str]:
     return ordered[:10]
 
 
+def _emphasize_publish_text(line: str) -> str:
+    text = str(line or "").strip()
+    if not text or text.startswith("[[IMAGE:"):
+        return text
+    text = re.sub(r"^(주의|핵심|결론|요약|포인트|체크|질문|답변|예시|정리)(\s*[:：])", r"<strong>\1\2</strong>", text)
+    text = re.sub(r"(일반공급 1순위|특별공급|청약통장|예치금|거주요건|무주택|소득과 자산|계약금|중도금|잔금|취득세|체크리스트|FAQ|How To 분양)", r"<strong>\1</strong>", text)
+    return text
+
+
 def markdown_to_html(markdown: str) -> str:
-    html_lines: list[str] = []
+    html_lines: list[str] = [
+        "<style>",
+        "body{font-family:'Pretendard Variable','Pretendard','SUIT Variable','SUIT','Noto Sans KR','Noto Sans CJK KR',sans-serif;max-width:860px;margin:0 auto;padding:40px 24px 72px;line-height:1.85;color:#1f2937;background:#faf7f2;}",
+        "h1,h2,p{margin:0;} h1{font-size:28px;font-weight:800;line-height:1.28;color:#123a70;letter-spacing:-0.03em;margin-bottom:22px;}",
+        "h2{font-size:25px;font-weight:800;line-height:1.38;color:#123a70;letter-spacing:-0.02em;margin:38px 0 16px;padding-left:14px;border-left:5px solid #ea643f;}",
+        "p{font-size:18px;margin-top:14px;word-break:keep-all;} p strong{font-weight:800;color:#111827;}",
+        "</style>",
+    ]
     for raw_line in str(markdown or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
         if line.startswith("# "):
-            html_lines.append(f"<h1>{line[2:].strip()}</h1>")
+            html_lines.append(f"<h1>{_emphasize_publish_text(line[2:].strip())}</h1>")
         elif line.startswith("## "):
-            html_lines.append(f"<h2>{line[3:].strip()}</h2>")
+            html_lines.append(f"<h2>{_emphasize_publish_text(line[3:].strip())}</h2>")
         elif re.fullmatch(r"\[\[IMAGE:\d+\]\]", line):
             html_lines.append(f"<p>{line}</p>")
         elif line.startswith("- "):
-            html_lines.append(f"<p>• {line[2:].strip()}</p>")
+            html_lines.append(f"<p>• {_emphasize_publish_text(line[2:].strip())}</p>")
         else:
-            html_lines.append(f"<p>{line}</p>")
+            html_lines.append(f"<p>{_emphasize_publish_text(line)}</p>")
     return "\n".join(html_lines)
 
 
@@ -1536,6 +1670,7 @@ def build_publish_bundle(
     output_root: str | Path,
     title_override: str | None = None,
     image_provider: str = "local",
+    related_links: list[dict[str, str]] | None = None,
 ) -> PublishBundle:
     prepared_article = _prepare_article_for_publish(title=variant_title, article_markdown=article_markdown)
     original_title, sections = parse_publish_sections(prepared_article, title_hint=variant_title)
@@ -1548,7 +1683,7 @@ def build_publish_bundle(
         PublishAsset(slot=asset.slot, kind=asset.kind, label=asset.label, path=_ensure_publish_asset_min_side(asset.path, min_publish_side_px))
         for asset in assets
     ]
-    markdown = build_publish_markdown(title=publish_title, sections=sections, assets=assets)
+    markdown = build_publish_markdown(title=publish_title, sections=sections, assets=assets, related_links=related_links)
     body_html = markdown_to_html(markdown)
     tags = default_tags(publish_title)
     apt_id = f"longtail-bundle-{bundle_id}"
@@ -1591,11 +1726,29 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
     ).fetchone()
     if not draft:
         raise ValueError(f"draft_id={bundle['primary_draft_id']} 를 찾지 못했습니다.")
+    related_rows = conn.execute(
+        """
+        SELECT published_title, naver_url
+        FROM publish_history
+        WHERE channel = 'naver_blog'
+          AND naver_url IS NOT NULL
+          AND bundle_id != ?
+        ORDER BY published_at DESC, id DESC
+        LIMIT 3
+        """,
+        (bundle_id,),
+    ).fetchall()
+    related_links = [
+        {"title": row["published_title"], "url": row["naver_url"]}
+        for row in related_rows
+        if row["naver_url"]
+    ]
     return {
         "bundle_id": bundle["id"],
         "variant_id": bundle["variant_id"],
         "title": draft["title"],
         "article_markdown": draft["article_markdown"],
+        "related_links": related_links,
     }
 
 
@@ -1607,6 +1760,8 @@ def publish_bundle_to_naver(
     mode: str = "private",
     title_override: str | None = None,
     image_provider: str = "auto",
+    category_no: str | None = None,
+    category_name: str | None = None,
 ) -> dict[str, Any]:
     article = load_bundle_article(db_path, bundle_id)
     publish_bundle = build_publish_bundle(
@@ -1616,6 +1771,7 @@ def publish_bundle_to_naver(
         output_root=output_root,
         title_override=title_override,
         image_provider=image_provider,
+        related_links=article.get("related_links"),
     )
 
     blog_root = Path("/home/kj/app/bunyang/blog-cheongyak-automation")
@@ -1623,6 +1779,11 @@ def publish_bundle_to_naver(
         sys.path.insert(0, str(blog_root))
 
     from src.publisher.naver_playwright import publish as naver_publish
+
+    if category_no:
+        os.environ["NAVER_BLOG_CATEGORY_NO"] = str(category_no)
+    if category_name:
+        os.environ["NAVER_BLOG_CATEGORY_NAME"] = str(category_name)
 
     out_dir = blog_root / "outputs" / "publish_longtail"
     ok = naver_publish(
@@ -1641,4 +1802,12 @@ def publish_bundle_to_naver(
     result["bundle_id"] = bundle_id
     result["meta_path"] = publish_bundle.meta_path
     result["image_provider"] = _resolve_publish_image_provider(image_provider)
+    result["publish_review"] = {
+        "viewer_url_present": bool(result.get("current_url")),
+        "viewer_image_count_matches": result.get("viewer_image_count") == len(publish_bundle.images),
+        "inline_image_count_matches": result.get("inline_image_count") == len(publish_bundle.images),
+        "no_trailing_images": int(result.get("trailing_image_count") or 0) == 0,
+        "no_low_res_images": int(result.get("viewer_low_res_image_count") or 0) == 0,
+        "manual_review_required": bool(result.get("manual_review_required")),
+    }
     return result

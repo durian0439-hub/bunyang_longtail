@@ -16,13 +16,15 @@ from .config import (
 from .database import connect, fetch_all, fetch_one, init_db
 from .gpt_web import GptWebExecutionError, execute_image_job, execute_text_job
 from .local_image_fallback import render_fallback_thumbnail
+from .article_quality import score_article_quality
 from .openai_compat import (
     OpenAICompatExecutionError,
     execute_image_job as execute_image_job_openai,
     execute_text_job as execute_text_job_openai,
 )
+from .codex_cli import CodexCLIExecutionError, execute_text_job as execute_text_job_codex_cli
 
-TEXT_ROUTE_DEFAULT = "gpt_web_playwright"
+TEXT_ROUTE_DEFAULT = "codex_cli"
 IMAGE_ROUTE_DEFAULT = "gpt_web_playwright"
 TEXT_PROFILE_DEFAULT = "gpt_text_profile_dev"
 IMAGE_PROFILE_DEFAULT = "gpt_image_profile_dev"
@@ -416,6 +418,39 @@ def start_job(db_path: str | Path, job_id: int) -> None:
 
 
 
+def _rewrite_blog_title(title: str) -> str:
+    cleaned = (title or "").strip()
+    if not cleaned:
+        return cleaned
+    cleaned = cleaned.replace("입주자모집공고과", "입주자모집공고와")
+    cleaned = cleaned.replace("거주의무과", "거주의무와")
+    parts = [part.strip() for part in cleaned.split(',') if part.strip()]
+    if len(parts) >= 2:
+        cleaned = ' '.join(parts[:2])
+    cleaned = cleaned.replace(' FAQ 기준', '')
+    cleaned = cleaned.replace(' FAQ', '')
+    cleaned = cleaned.replace(' 정리 기준', ' 정리')
+    cleaned = cleaned.replace(' 기준 정리', ' 정리')
+    cleaned = ' '.join(cleaned.split())
+    if cleaned.endswith('기준') and len(cleaned) > 18:
+        cleaned = cleaned[:-2].rstrip()
+    priority_tokens = [' 놓치면 탈락하는 포인트', ' 탈락 포인트', ' 확인포인트', ' 핵심 포인트', ' 체크 포인트', ' 포인트 정리', ' 가능 여부 기준', ' 정리']
+    shortened = cleaned
+    for token in priority_tokens:
+        if token in shortened:
+            shortened = shortened.replace(token, '')
+            shortened = ' '.join(shortened.split())
+    return shortened[:60].rstrip()
+
+
+def _extract_h1_title(article_markdown: str) -> str | None:
+    for line in article_markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('# '):
+            return stripped[2:].strip()
+    return None
+
+
 def complete_text_job(
     db_path: str | Path,
     *,
@@ -436,10 +471,13 @@ def complete_text_job(
             raise ValueError("text 완료 처리 대상이 아닙니다.")
         variant = _fetch_variant(conn, job["variant_id"])
         bundle = _fetch_bundle(conn, job["bundle_id"])
-        final_title = title or variant["title"]
+        h1_title = _extract_h1_title(article_markdown)
+        final_title = _rewrite_blog_title(h1_title or title or variant["title"])
         final_excerpt = excerpt or article_markdown.strip().splitlines()[0][:180]
         content_hash = _content_hash(article_markdown)
         normalized_title_hash = _hash(_normalize_title(final_title), size=24)
+        computed_quality_score, quality_meta = score_article_quality(article_markdown)
+        effective_quality_score = quality_score if quality_score is not None else computed_quality_score
         conn.execute(
             """
             INSERT INTO article_draft (
@@ -460,7 +498,7 @@ def complete_text_job(
                 content_hash,
                 normalized_title_hash,
                 similarity_score,
-                quality_score,
+                effective_quality_score,
                 job["route"],
             ),
         )
@@ -472,9 +510,12 @@ def complete_text_job(
             """,
             (draft_id, variant["semantic_key"], content_hash, normalized_title_hash),
         )
+        merged_response_payload = dict(response_payload or {})
+        merged_response_payload.setdefault("quality_meta", quality_meta)
+        merged_response_payload.setdefault("computed_quality_score", computed_quality_score)
         conn.execute(
             "UPDATE generation_job SET status = 'succeeded', response_payload_json = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(response_payload, ensure_ascii=False) if response_payload else None, job_id),
+            (json.dumps(merged_response_payload, ensure_ascii=False), job_id),
         )
         conn.execute(
             "UPDATE topic_variant SET status = 'drafted', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -662,8 +703,8 @@ def run_bundle(
     init_db(db_path)
     if simulate and markdown_file:
         raise ValueError("simulate 와 markdown_file 은 동시에 사용할 수 없습니다.")
-    if simulate and executor_mode != "playwright":
-        raise ValueError("simulate 사용 시 executor_mode 는 기본값(playwright)으로 두어야 합니다.")
+    if simulate and executor_mode not in {"playwright", "codex_cli"}:
+        raise ValueError("simulate 사용 시 executor_mode 는 playwright 또는 codex_cli 여야 합니다.")
 
     if image_fallback not in {"none", "local_canvas"}:
         raise ValueError(f"지원하지 않는 image_fallback 입니다: {image_fallback}")
@@ -715,6 +756,7 @@ def run_bundle(
         and existing_bundle.get("primary_draft_id")
         and markdown_file is None
         and not simulate
+        and text_route in {"reuse_existing", "reuse_or_codex_cli"}
     )
 
     if reuse_existing_draft:
@@ -828,6 +870,29 @@ def run_bundle(
                     response_payload=execution.get("response_payload"),
                 )
             except OpenAICompatExecutionError as exc:
+                fail_job(db_path, job_id=text_job["job_id"], error_code=exc.code, error_message=str(exc))
+                errors.append({"job_id": text_job["job_id"], "code": exc.code, "message": str(exc), "artifact_dir": exc.artifact_dir})
+                return _bundle_payload("failed")
+        elif executor_mode == "codex_cli":
+            with connect(db_path) as conn:
+                text_job_row = _fetch_job(conn, text_job["job_id"])
+            try:
+                execution = execute_text_job_codex_cli(
+                    job_id=text_job["job_id"],
+                    prompt_payload=text_job_row["request_payload_json"].get("prompt"),
+                    timeout_seconds=response_timeout_seconds,
+                    artifact_root=artifact_root,
+                )
+                text_result = complete_text_job(
+                    db_path,
+                    job_id=text_job["job_id"],
+                    article_markdown=execution["article_markdown"],
+                    excerpt=execution.get("excerpt"),
+                    quality_score=quality_score,
+                    similarity_score=similarity_score,
+                    response_payload=execution.get("response_payload"),
+                )
+            except CodexCLIExecutionError as exc:
                 fail_job(db_path, job_id=text_job["job_id"], error_code=exc.code, error_message=str(exc))
                 errors.append({"job_id": text_job["job_id"], "code": exc.code, "message": str(exc), "artifact_dir": exc.artifact_dir})
                 return _bundle_payload("failed")
