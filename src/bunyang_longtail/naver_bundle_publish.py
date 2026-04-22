@@ -1757,7 +1757,7 @@ def publish_bundle_to_naver(
     db_path: str | Path,
     bundle_id: int,
     output_root: str | Path,
-    mode: str = "private",
+    mode: str = "public",
     title_override: str | None = None,
     image_provider: str = "auto",
     category_no: str | None = None,
