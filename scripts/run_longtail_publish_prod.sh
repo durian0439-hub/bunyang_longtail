@@ -44,16 +44,44 @@ with connect(DB_PATH) as conn:
     row = fetch_one(
         conn,
         """
+        WITH last_published AS (
+            SELECT ph.variant_id, tc.family, tv.angle, ph.published_at,
+                   ROW_NUMBER() OVER (ORDER BY ph.published_at DESC, ph.id DESC) AS rn
+            FROM publish_history ph
+            JOIN topic_variant tv ON tv.id = ph.variant_id
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE ph.channel = 'naver_blog'
+        )
         SELECT tv.id, tv.title
         FROM topic_variant tv
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
         WHERE tv.status = 'queued'
-        AND NOT EXISTS (
-            SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
-        )
-        ORDER BY tv.created_at ASC, tv.id ASC
+          AND NOT EXISTS (
+              SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM last_published lp
+              WHERE lp.rn <= 4 AND (lp.family = tc.family OR lp.angle = tv.angle)
+          )
+        ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
         LIMIT 1
         """,
     )
+    if not row:
+        row = fetch_one(
+            conn,
+            """
+            SELECT tv.id, tv.title
+            FROM topic_variant tv
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE tv.status = 'queued'
+              AND NOT EXISTS (
+                  SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
+              )
+            ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
+            LIMIT 1
+            """,
+        )
 
 if not row:
     print(json.dumps({'status': 'noop', 'reason': 'no queued unpublished variant'}, ensure_ascii=False))
