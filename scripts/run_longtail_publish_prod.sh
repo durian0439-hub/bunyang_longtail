@@ -20,10 +20,9 @@ fi
 {
   echo "[$(date '+%F %T')] start: longtail publish prod"
 
-  cd /home/kj/app/bunyang_longtail
+  cd "$DEV_ROOT"
   git pull --rebase origin main
 
-  cd "$DEV_ROOT"
   /usr/bin/python3 -m unittest tests.test_naver_bundle_publish tests.test_longtail
 
   /usr/bin/python3 run.py replenish --min-queued 30 --variants-per-cluster 3
