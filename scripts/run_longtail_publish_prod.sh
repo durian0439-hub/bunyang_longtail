@@ -33,79 +33,73 @@ fi
 
   /usr/bin/python3 - <<'PY'
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
 sys.path.insert(0, 'src')
-from bunyang_longtail.database import connect, fetch_one
+from bunyang_longtail.cron_publish import describe_unpublishable_run_result, select_publish_candidate
+from bunyang_longtail.database import connect
 from bunyang_longtail.workers import run_bundle
 
 DB_PATH = 'data/cdp_probe5.sqlite3'
 OUTPUT_BASE = Path('data/naver_publish/cron_runs')
 OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
+MAX_VARIANT_ATTEMPTS = 3
 
-with connect(DB_PATH) as conn:
-    row = fetch_one(
-        conn,
-        """
-        WITH last_published AS (
-            SELECT ph.variant_id, tc.family, tv.angle, ph.published_at,
-                   ROW_NUMBER() OVER (ORDER BY ph.published_at DESC, ph.id DESC) AS rn
-            FROM publish_history ph
-            JOIN topic_variant tv ON tv.id = ph.variant_id
-            JOIN topic_cluster tc ON tc.id = tv.cluster_id
-            WHERE ph.channel = 'naver_blog'
-        )
-        SELECT tv.id, tv.title
-        FROM topic_variant tv
-        JOIN topic_cluster tc ON tc.id = tv.cluster_id
-        WHERE tv.status = 'queued'
-          AND NOT EXISTS (
-              SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
-          )
-          AND NOT EXISTS (
-              SELECT 1 FROM last_published lp
-              WHERE lp.rn <= 4 AND (lp.family = tc.family OR lp.angle = tv.angle)
-          )
-        ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
-        LIMIT 1
-        """,
-    )
+attempted_variant_ids: set[int] = set()
+selected_run_result = None
+
+for attempt in range(1, MAX_VARIANT_ATTEMPTS + 1):
+    with connect(DB_PATH) as conn:
+        row = select_publish_candidate(conn, excluded_variant_ids=attempted_variant_ids)
+
     if not row:
-        row = fetch_one(
-            conn,
-            """
-            SELECT tv.id, tv.title
-            FROM topic_variant tv
-            JOIN topic_cluster tc ON tc.id = tv.cluster_id
-            WHERE tv.status = 'queued'
-              AND NOT EXISTS (
-                  SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
-              )
-            ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
-            LIMIT 1
-            """,
-        )
+        break
 
-if not row:
-    print(json.dumps({'status': 'noop', 'reason': 'no queued unpublished variant'}, ensure_ascii=False))
+    variant_id = int(row['id'])
+    attempted_variant_ids.add(variant_id)
+    print(json.dumps({
+        'status': 'selected_variant',
+        'attempt': attempt,
+        'variant_id': variant_id,
+        'title': row['title'],
+    }, ensure_ascii=False))
+
+    run_result = run_bundle(
+        DB_PATH,
+        variant_id=variant_id,
+        executor_mode='codex_cli',
+        text_route='codex_cli',
+        image_roles=None,
+        simulate=False,
+    )
+    print(json.dumps(run_result, ensure_ascii=False, indent=2))
+
+    blocker = describe_unpublishable_run_result(run_result)
+    if blocker:
+        print(json.dumps({
+            'status': 'skip_publish',
+            'attempt': attempt,
+            **blocker,
+        }, ensure_ascii=False))
+        continue
+
+    selected_run_result = run_result
+    break
+
+if not selected_run_result:
+    print(json.dumps({
+        'status': 'noop',
+        'reason': 'no publishable bundle after attempts',
+        'attempted_variant_ids': sorted(attempted_variant_ids),
+    }, ensure_ascii=False))
     raise SystemExit(0)
 
-variant_id = row['id']
-run_result = run_bundle(
-    DB_PATH,
-    variant_id=variant_id,
-    executor_mode='codex_cli',
-    text_route='codex_cli',
-    image_roles=None,
-    simulate=False,
-)
-
-bundle_id = run_result['bundle']['id']
+bundle_id = selected_run_result['bundle']['id']
 out_dir = OUTPUT_BASE / f'bundle_{bundle_id}'
 out_dir.mkdir(parents=True, exist_ok=True)
-
-import os
 
 cmd = [
     '/usr/bin/xvfb-run',

@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 from bunyang_longtail.cli import main
 from bunyang_longtail.codex_cli import CodexCLIExecutionError, _resolve_codex_executable, _validate_house_style
 from bunyang_longtail.config import OPENAI_COMPAT_IMAGE_MODEL, OPENAI_COMPAT_TEXT_MODEL
+from bunyang_longtail.cron_publish import describe_unpublishable_run_result, select_publish_candidate
 from bunyang_longtail.prompt_builder import build_prompt_package
 from bunyang_longtail.database import connect, init_db, migrate_db
 from bunyang_longtail.gpt_web import (
@@ -246,6 +247,50 @@ class LongtailPlannerTest(unittest.TestCase):
                 (retried["job_id"],),
             ).fetchone()[0]
         self.assertEqual(attempt_no, 2)
+
+    def test_select_publish_candidate_skips_excluded_variant_ids(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        with connect(self.db_path) as conn:
+            first = select_publish_candidate(conn)
+            self.assertIsNotNone(first)
+            second = select_publish_candidate(conn, excluded_variant_ids={first["id"]})
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first["id"], second["id"])
+
+    def test_describe_unpublishable_run_result_detects_missing_primary_draft(self) -> None:
+        result = {
+            "mode": "failed",
+            "bundle": {
+                "id": 24,
+                "variant_id": 27,
+                "bundle_status": "queued",
+                "primary_draft_id": None,
+            },
+            "errors": [
+                {
+                    "code": "CODEX_CLI_STYLE_GUARD_FAILED",
+                    "message": "금지된 상투 표현이 감지됐습니다: 이 전략이 맞습니다",
+                }
+            ],
+        }
+        blocker = describe_unpublishable_run_result(result)
+        self.assertIsNotNone(blocker)
+        self.assertEqual(blocker["reason"], "run_bundle_reported_errors")
+        self.assertEqual(blocker["first_error_code"], "CODEX_CLI_STYLE_GUARD_FAILED")
+        self.assertIsNone(blocker["primary_draft_id"])
+
+    def test_describe_unpublishable_run_result_returns_none_for_publishable_bundle(self) -> None:
+        result = {
+            "mode": "codex_cli_complete",
+            "bundle": {
+                "id": 25,
+                "variant_id": 28,
+                "bundle_status": "bundled",
+                "primary_draft_id": 101,
+            },
+            "errors": [],
+        }
+        self.assertIsNone(describe_unpublishable_run_result(result))
 
     def test_run_bundle_openai_compat_executor_completes_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=10, variants_per_cluster=1)

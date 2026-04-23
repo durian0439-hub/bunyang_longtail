@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+from collections.abc import Collection, Mapping
+from typing import Any
+
+from .database import fetch_one
+
+
+def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int] | None = None) -> Any:
+    excluded_ids = sorted({int(variant_id) for variant_id in (excluded_variant_ids or [])})
+    exclude_sql = ""
+    params: list[Any] = []
+    if excluded_ids:
+        placeholders = ", ".join("?" for _ in excluded_ids)
+        exclude_sql = f" AND tv.id NOT IN ({placeholders})"
+        params.extend(excluded_ids)
+
+    primary_query = f"""
+        WITH last_published AS (
+            SELECT ph.variant_id, tc.family, tv.angle, ph.published_at,
+                   ROW_NUMBER() OVER (ORDER BY ph.published_at DESC, ph.id DESC) AS rn
+            FROM publish_history ph
+            JOIN topic_variant tv ON tv.id = ph.variant_id
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE ph.channel = 'naver_blog'
+        )
+        SELECT tv.id, tv.title
+        FROM topic_variant tv
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE tv.status = 'queued'
+          {exclude_sql}
+          AND NOT EXISTS (
+              SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM last_published lp
+              WHERE lp.rn <= 4 AND (lp.family = tc.family OR lp.angle = tv.angle)
+          )
+        ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
+        LIMIT 1
+    """
+    row = fetch_one(conn, primary_query, tuple(params))
+    if row:
+        return row
+
+    fallback_query = f"""
+        SELECT tv.id, tv.title
+        FROM topic_variant tv
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE tv.status = 'queued'
+          {exclude_sql}
+          AND NOT EXISTS (
+              SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
+          )
+        ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
+        LIMIT 1
+    """
+    return fetch_one(conn, fallback_query, tuple(params))
+
+
+def describe_unpublishable_run_result(run_result: Mapping[str, Any]) -> dict[str, Any] | None:
+    bundle = dict(run_result.get("bundle") or {})
+    errors = list(run_result.get("errors") or [])
+    detail = {
+        "mode": run_result.get("mode"),
+        "bundle_id": bundle.get("id"),
+        "variant_id": bundle.get("variant_id"),
+        "bundle_status": bundle.get("bundle_status"),
+        "primary_draft_id": bundle.get("primary_draft_id"),
+    }
+
+    if errors:
+        first_error = dict(errors[0] or {}) if errors else {}
+        detail.update(
+            {
+                "reason": "run_bundle_reported_errors",
+                "error_count": len(errors),
+                "first_error_code": first_error.get("code"),
+                "first_error_message": first_error.get("message"),
+            }
+        )
+        return detail
+
+    if not bundle:
+        detail["reason"] = "missing_bundle_payload"
+        return detail
+
+    if not bundle.get("primary_draft_id"):
+        detail["reason"] = "missing_primary_draft_id"
+        return detail
+
+    return None
