@@ -5,6 +5,8 @@ from typing import Any
 
 from .database import fetch_one
 
+RECENT_PUBLISH_GUARD_COUNT = 4
+
 
 def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int] | None = None) -> Any:
     excluded_ids = sorted({int(variant_id) for variant_id in (excluded_variant_ids or [])})
@@ -15,10 +17,15 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
         exclude_sql = f" AND tv.id NOT IN ({placeholders})"
         params.extend(excluded_ids)
 
-    primary_query = f"""
-        WITH last_published AS (
-            SELECT ph.variant_id, tc.family, tv.angle, ph.published_at,
-                   ROW_NUMBER() OVER (ORDER BY ph.published_at DESC, ph.id DESC) AS rn
+    query = f"""
+        WITH recent_published AS (
+            SELECT
+                ph.variant_id,
+                tc.id AS cluster_id,
+                tc.family,
+                tc.primary_keyword,
+                tv.angle,
+                ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
             FROM publish_history ph
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
@@ -33,29 +40,20 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
               SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
           )
           AND NOT EXISTS (
-              SELECT 1 FROM last_published lp
-              WHERE lp.rn <= 4 AND (lp.family = tc.family OR lp.angle = tv.angle)
+              SELECT 1
+              FROM recent_published rp
+              WHERE rp.rn <= ?
+                AND (
+                    rp.cluster_id = tc.id
+                    OR rp.primary_keyword = tc.primary_keyword
+                    OR rp.family = tc.family
+                    OR rp.angle = tv.angle
+                )
           )
         ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
         LIMIT 1
     """
-    row = fetch_one(conn, primary_query, tuple(params))
-    if row:
-        return row
-
-    fallback_query = f"""
-        SELECT tv.id, tv.title
-        FROM topic_variant tv
-        JOIN topic_cluster tc ON tc.id = tv.cluster_id
-        WHERE tv.status = 'queued'
-          {exclude_sql}
-          AND NOT EXISTS (
-              SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
-          )
-        ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
-        LIMIT 1
-    """
-    return fetch_one(conn, fallback_query, tuple(params))
+    return fetch_one(conn, query, tuple([*params, RECENT_PUBLISH_GUARD_COUNT]))
 
 
 def describe_unpublishable_run_result(run_result: Mapping[str, Any]) -> dict[str, Any] | None:

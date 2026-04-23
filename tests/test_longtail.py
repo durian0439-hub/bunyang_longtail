@@ -263,6 +263,69 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIsNotNone(second)
         self.assertNotEqual(first["id"], second["id"])
 
+    def test_select_publish_candidate_skips_recent_cluster_family_keyword_and_angle(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+
+        with connect(self.db_path) as conn:
+            published = conn.execute(
+                """
+                SELECT tv.id, tv.cluster_id, tc.family, tc.primary_keyword, tv.angle
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tv.status = 'queued'
+                ORDER BY tv.id ASC
+                LIMIT 1
+                """,
+            ).fetchone()
+
+        mark_published(self.db_path, published["id"], "https://blog.naver.com/example/recent-guard")
+
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+            self.assertIsNotNone(candidate)
+            selected = conn.execute(
+                """
+                SELECT tv.cluster_id, tc.family, tc.primary_keyword, tv.angle
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tv.id = ?
+                """,
+                (candidate["id"],),
+            ).fetchone()
+
+        self.assertNotEqual(selected["cluster_id"], published["cluster_id"])
+        self.assertNotEqual(selected["family"], published["family"])
+        self.assertNotEqual(selected["primary_keyword"], published["primary_keyword"])
+        self.assertNotEqual(selected["angle"], published["angle"])
+
+    def test_select_publish_candidate_returns_none_when_recent_guard_blocks_all_candidates(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+
+        with connect(self.db_path) as conn:
+            variants = conn.execute(
+                """
+                SELECT id, angle
+                FROM topic_variant
+                WHERE status = 'queued' AND angle IN ('판단형', '비교형')
+                ORDER BY id ASC
+                """,
+            ).fetchall()
+
+        variant_by_angle = {}
+        for row in variants:
+            variant_by_angle.setdefault(row["angle"], row["id"])
+
+        self.assertIn("판단형", variant_by_angle)
+        self.assertIn("비교형", variant_by_angle)
+
+        mark_published(self.db_path, variant_by_angle["판단형"], "https://blog.naver.com/example/recent-guard-1")
+        mark_published(self.db_path, variant_by_angle["비교형"], "https://blog.naver.com/example/recent-guard-2")
+
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+
+        self.assertIsNone(candidate)
+
     def test_describe_unpublishable_run_result_detects_missing_primary_draft(self) -> None:
         result = {
             "mode": "failed",
