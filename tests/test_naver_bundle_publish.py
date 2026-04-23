@@ -302,6 +302,22 @@ class TestNaverBundlePublish(unittest.TestCase):
             self.assertNotIn("| 비교 항목 |", markdown)
             self.assertNotIn("| --- |", markdown)
 
+    def test_render_table_image_uses_chalkboard_style(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "table.png"
+            target.render_table_image(
+                title="기관추천 특별공급과 일반공급 노부모 부양 세대는 무엇이 다를까",
+                label="비교 표",
+                headers=["비교 항목", "기관추천 특별공급", "일반공급"],
+                rows=[["시작 조건", "추천기관 대상 여부", "청약통장과 순위"]],
+                output_path=path,
+            )
+            self.assertTrue(path.exists())
+            with Image.open(path) as image:
+                avg = image.convert("RGB").resize((1, 1)).getpixel((0, 0))
+            self.assertLess(sum(avg) / 3, 120)
+            self.assertGreater(avg[1], avg[0])
+
     def test_build_gpt_publish_image_plans_ranking_matches_expected_slots(self) -> None:
         _, sections = parse_publish_sections(SAMPLE_ARTICLE, title_hint="1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까")
         plans = _build_gpt_publish_image_plans(

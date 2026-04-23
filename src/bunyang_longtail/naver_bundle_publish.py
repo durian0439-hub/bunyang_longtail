@@ -811,67 +811,105 @@ def render_table_image(*, title: str, label: str, headers: list[str], rows: list
 
     palette = _topic_palette(title)
     accent = palette["accent"]
-    soft = palette["soft"]
     width = height = 1080
-    image = Image.new("RGB", (width, height), "#F8FAFC")
+    image = Image.new("RGB", (width, height), "#163B2E")
     draw = ImageDraw.Draw(image)
 
-    draw.rounded_rectangle((44, 44, 1036, 1036), radius=42, fill="white", outline="#E2E8F0", width=3)
-    draw.rounded_rectangle((84, 84, 252, 136), radius=22, fill=accent)
-    draw.text((168, 110), "핵심 표 정리", fill="white", font=_font(28), anchor="mm")
+    for y in range(height):
+        top = (20, 58, 45)
+        bottom = (14, 42, 33)
+        ratio = y / max(height - 1, 1)
+        color = tuple(int(top[idx] * (1 - ratio) + bottom[idx] * ratio) for idx in range(3))
+        draw.line((0, y, width, y), fill=color)
+
+    for x in range(0, width, 32):
+        shade = 18 + (x % 64)
+        draw.line((x, 0, x, height), fill=(18, 52 + shade // 8, 40 + shade // 10), width=1)
+    for y in range(0, height, 28):
+        draw.line((0, y, width, y), fill=(22, 63, 48), width=1)
+
+    board_fill = "#1B4B3A"
+    border = "#A7F3D0"
+    chalk_white = "#F8FAFC"
+    chalk_yellow = "#FDE68A"
+    chalk_mint = "#A7F3D0"
+    chalk_blue = "#BFDBFE"
+    chalk_pink = "#F9A8D4"
+
+    draw.rounded_rectangle((42, 42, 1038, 1038), radius=44, fill=board_fill, outline=border, width=4)
+    draw.rounded_rectangle((86, 84, 292, 140), radius=24, fill="#0F2E23", outline=chalk_mint, width=2)
+    draw.text((189, 112), "칠판 표 정리", fill=chalk_yellow, font=_font(28), anchor="mm")
+    draw.text((950, 104), "데일리어셈블", fill=chalk_mint, font=_font(18), anchor="mm")
 
     title_lines = _fit_lines(draw, title, max_width=860, font_size=34, max_lines=2)
-    y = 176
+    y = 182
     for line in title_lines:
-        draw.text((86, y), line, fill="#475569", font=_font(32))
+        draw.text((88, y), line, fill=chalk_blue, font=_font(32))
         y += 40
 
-    draw.text((86, 270), _trim_text(label, 34), fill="#0F172A", font=_font(48))
-    draw.text((86, 326), "복잡한 설명보다 판단 포인트를 표로 먼저 보시면 빠릅니다.", fill="#64748B", font=_font(26))
+    draw.text((88, 272), _trim_text(label, 32), fill=chalk_white, font=_font(46))
+    draw.text((88, 328), "표도 본문과 같은 칠판 컨셉으로 맞춰 한눈에 보이게 정리했습니다.", fill=chalk_mint, font=_font(24))
 
     left = 82
     right = 998
-    top = 390
-    header_height = 72
+    top = 392
+    header_height = 78
     table_width = right - left
     ratios = _table_column_widths(len(headers))
     widths = [int(table_width * ratio) for ratio in ratios]
     widths[-1] = table_width - sum(widths[:-1])
 
+    table_bottom = 926
+    draw.rounded_rectangle((left, top, right, table_bottom), radius=28, outline=chalk_white, width=3)
+
     x = left
+    header_colors = [chalk_yellow, chalk_mint, chalk_blue, chalk_pink]
     for index, header in enumerate(headers):
         cell_right = x + widths[index]
-        draw.rounded_rectangle((x, top, cell_right, top + header_height), radius=0, fill=accent)
-        draw.text((x + 16, top + 22), header, fill="white", font=_font(26))
+        fill = "#204F3D" if index % 2 == 0 else "#1E4637"
+        draw.rounded_rectangle((x, top, cell_right, top + header_height), radius=0, fill=fill, outline=chalk_white, width=2)
+        header_lines = _fit_lines(draw, header, max_width=widths[index] - 30, font_size=24, max_lines=2)
+        draw.multiline_text(
+            (x + widths[index] / 2, top + header_height / 2),
+            "\n".join(header_lines),
+            fill=header_colors[index % len(header_colors)],
+            font=_font(24),
+            anchor="mm",
+            align="center",
+            spacing=4,
+        )
         x = cell_right
 
     row_y = top + header_height
+    row_palette = ["#173F31", "#1A4636"]
     for row_index, row in enumerate(rows[:5]):
         cell_lines: list[list[str]] = []
         max_lines = 1
         for column_index, cell in enumerate(row):
             column_width = widths[column_index] - 28
-            lines = _wrap_text(draw, str(cell or ""), _font(24), column_width, 4)
+            lines = _wrap_text(draw, str(cell or ""), _font(22), column_width, 4)
             cell_lines.append(lines)
             max_lines = max(max_lines, len(lines))
 
-        row_height = max(74, 24 * max_lines + 34)
+        row_height = max(90, 28 * max_lines + 34)
         x = left
-        fill = "#F8FAFC" if row_index % 2 == 0 else soft
+        fill = row_palette[row_index % len(row_palette)]
+        text_color = chalk_white if row_index % 2 == 0 else chalk_mint
         for column_index, lines in enumerate(cell_lines):
             cell_right = x + widths[column_index]
-            draw.rectangle((x, row_y, cell_right, row_y + row_height), fill=fill, outline="#E2E8F0", width=2)
-            text_y = row_y + 18
+            draw.rectangle((x, row_y, cell_right, row_y + row_height), fill=fill, outline=chalk_white, width=2)
+            text_y = row_y + 16
+            line_color = text_color if column_index != 0 else chalk_yellow
             for line in lines:
-                draw.text((x + 14, text_y), line, fill="#1F2937", font=_font(24))
+                draw.text((x + 14, text_y), line, fill=line_color, font=_font(22))
                 text_y += 28
             x = cell_right
         row_y += row_height
-        if row_y > 920:
+        if row_y > 900:
             break
 
-    draw.rounded_rectangle((82, 948, 998, 996), radius=18, fill=soft)
-    draw.text((540, 972), "숫자와 자격은 최종 공고문 기준으로 다시 확인", fill=accent, font=_font(24), anchor="mm")
+    draw.rounded_rectangle((84, 950, 996, 998), radius=18, fill="#0F2E23", outline=chalk_mint, width=2)
+    draw.text((540, 974), "숫자와 자격은 최종 공고문 기준으로 다시 확인", fill=chalk_yellow, font=_font(24), anchor="mm")
 
     image.save(output)
     return str(output)
