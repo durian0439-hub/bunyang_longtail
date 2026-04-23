@@ -563,7 +563,7 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             "- 첫 줄은 H1 제목",
             "- 상단 요약 3문장",
             "- FAQ 6개 이상",
-            "- 마지막은 누가 이 전략에 맞는지 행동 가이드 1문장",
+            "- 마지막은 어떤 독자에게 더 적합한지 행동 가이드 1문장",
         ]
     ).strip()
 

@@ -33,6 +33,8 @@ BANNED_STYLE_PATTERNS = (
     r"이 전략이 맞습니다",
 )
 
+MAX_STYLE_REWRITE_ATTEMPTS = 2
+
 
 def _artifact_dir(job_id: int, artifact_root: str | Path | None = None) -> Path:
     base = Path(artifact_root) if artifact_root else Path("/home/kj/app/bunyang_longtail/dev/data/codex_cli_artifacts")
@@ -95,6 +97,79 @@ def _validate_house_style(article_markdown: str) -> None:
 
 
 
+def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, attempt_no: int) -> str:
+    return "\n\n".join(
+        [
+            "아래 네이버 블로그용 한국어 마크다운 본문을 전체 다시 써 주세요.",
+            "핵심 정보, 제목, 섹션 구조, 사례, FAQ 개수는 유지하고 말투만 교정해야 합니다.",
+            f"이번 교정 사유: {failure_message}",
+            "교정 규칙:",
+            "- '판단이 맞습니다', '보는 게 맞습니다', '이 전략이 맞습니다' 같은 상담체 상투 표현을 쓰지 않습니다.",
+            "- '안전합니다' 종결은 최대 1회만 허용하고, 반복되면 다른 자연스러운 표현으로 바꿉니다.",
+            "- FAQ 답변을 '그렇습니다.' 같은 한 단어 단정형으로 시작하지 않습니다.",
+            "- 마지막 행동 가이드는 '이 전략' 표현 대신 어떤 독자에게 더 적합한지 담백하게 씁니다.",
+            "- 출력은 수정된 전체 마크다운 본문만 내보냅니다.",
+            f"현재 교정 시도: {attempt_no}",
+            article_markdown,
+        ]
+    )
+
+
+
+def _run_codex_exec(
+    *,
+    codex_executable: str,
+    workdir: str | Path,
+    request_text: str,
+    output_file: Path,
+    stdout_file: Path,
+    stderr_file: Path,
+    timeout_seconds: int,
+    artifact_dir: Path,
+) -> str:
+    cmd = [
+        codex_executable,
+        "exec",
+        "--skip-git-repo-check",
+        "-C",
+        str(workdir),
+        "-o",
+        str(output_file),
+        request_text,
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+    except FileNotFoundError as exc:
+        raise CodexCLIExecutionError(
+            f"Codex CLI 실행 파일 호출 실패: {exc}",
+            code="CODEX_CLI_NOT_FOUND",
+            artifact_dir=str(artifact_dir),
+        ) from exc
+    stdout_file.write_text(proc.stdout or "", encoding="utf-8")
+    stderr_file.write_text(proc.stderr or "", encoding="utf-8")
+    if proc.returncode != 0:
+        raise CodexCLIExecutionError(
+            f"Codex CLI 텍스트 생성 실패: returncode={proc.returncode}, stderr={(proc.stderr or '')[:500]}",
+            code="CODEX_CLI_EXEC_FAILED",
+            artifact_dir=str(artifact_dir),
+        )
+    if not output_file.exists():
+        raise CodexCLIExecutionError(
+            "Codex CLI 출력 파일이 생성되지 않았습니다.",
+            code="CODEX_CLI_OUTPUT_MISSING",
+            artifact_dir=str(artifact_dir),
+        )
+    article_markdown = output_file.read_text(encoding="utf-8").strip()
+    if not article_markdown:
+        raise CodexCLIExecutionError(
+            "Codex CLI 출력이 비어 있습니다.",
+            code="CODEX_CLI_EMPTY_OUTPUT",
+            artifact_dir=str(artifact_dir),
+        )
+    return article_markdown
+
+
+
 def _extract_excerpt(article_markdown: str) -> str:
     lines = [line.strip() for line in article_markdown.splitlines()]
     cleaned: list[str] = []
@@ -134,46 +209,52 @@ def execute_text_job(
     prompt_file.write_text(prompt_text, encoding="utf-8")
 
     codex_executable = _resolve_codex_executable()
-    cmd = [
-        codex_executable,
-        "exec",
-        "--skip-git-repo-check",
-        "-C",
-        str(workdir or "/home/kj/app/bunyang_longtail/dev"),
-        "-o",
-        str(output_file),
-        "아래 지침대로 네이버 블로그용 한국어 마크다운 본문만 작성하세요. 불필요한 설명 없이 본문만 출력하세요.\n\n" + prompt_text,
-    ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
-    except FileNotFoundError as exc:
-        raise CodexCLIExecutionError(
-            f"Codex CLI 실행 파일 호출 실패: {exc}",
-            code="CODEX_CLI_NOT_FOUND",
-            artifact_dir=str(artifact_dir),
-        ) from exc
-    (artifact_dir / "stdout.log").write_text(proc.stdout or "", encoding="utf-8")
-    (artifact_dir / "stderr.log").write_text(proc.stderr or "", encoding="utf-8")
-    if proc.returncode != 0:
-        raise CodexCLIExecutionError(
-            f"Codex CLI 텍스트 생성 실패: returncode={proc.returncode}, stderr={(proc.stderr or '')[:500]}",
-            code="CODEX_CLI_EXEC_FAILED",
-            artifact_dir=str(artifact_dir),
-        )
-    if not output_file.exists():
-        raise CodexCLIExecutionError(
-            "Codex CLI 출력 파일이 생성되지 않았습니다.",
-            code="CODEX_CLI_OUTPUT_MISSING",
-            artifact_dir=str(artifact_dir),
-        )
-    article_markdown = output_file.read_text(encoding="utf-8").strip()
-    if not article_markdown:
-        raise CodexCLIExecutionError(
-            "Codex CLI 출력이 비어 있습니다.",
-            code="CODEX_CLI_EMPTY_OUTPUT",
-            artifact_dir=str(artifact_dir),
-        )
-    _validate_house_style(article_markdown)
+    workdir_path = workdir or "/home/kj/app/bunyang_longtail/dev"
+    article_markdown = _run_codex_exec(
+        codex_executable=codex_executable,
+        workdir=workdir_path,
+        request_text="아래 지침대로 네이버 블로그용 한국어 마크다운 본문만 작성하세요. 불필요한 설명 없이 본문만 출력하세요.\n\n" + prompt_text,
+        output_file=output_file,
+        stdout_file=artifact_dir / "stdout.log",
+        stderr_file=artifact_dir / "stderr.log",
+        timeout_seconds=timeout_seconds,
+        artifact_dir=artifact_dir,
+    )
+
+    style_guard_failures: list[str] = []
+    style_rewrite_attempts = 0
+    while True:
+        try:
+            _validate_house_style(article_markdown)
+            break
+        except CodexCLIExecutionError as exc:
+            if exc.code != "CODEX_CLI_STYLE_GUARD_FAILED":
+                raise
+            style_guard_failures.append(str(exc))
+            if style_rewrite_attempts >= MAX_STYLE_REWRITE_ATTEMPTS:
+                raise CodexCLIExecutionError(
+                    f"Codex CLI 스타일 교정 실패: {style_guard_failures[-1]}",
+                    code=exc.code,
+                    artifact_dir=str(artifact_dir),
+                )
+            style_rewrite_attempts += 1
+            rewrite_prompt = _build_style_rewrite_prompt(
+                article_markdown=article_markdown,
+                failure_message=str(exc),
+                attempt_no=style_rewrite_attempts,
+            )
+            article_markdown = _run_codex_exec(
+                codex_executable=codex_executable,
+                workdir=workdir_path,
+                request_text=rewrite_prompt,
+                output_file=artifact_dir / f"style_rewrite_{style_rewrite_attempts}.md",
+                stdout_file=artifact_dir / f"style_rewrite_{style_rewrite_attempts}_stdout.log",
+                stderr_file=artifact_dir / f"style_rewrite_{style_rewrite_attempts}_stderr.log",
+                timeout_seconds=timeout_seconds,
+                artifact_dir=artifact_dir,
+            )
+            output_file.write_text(article_markdown, encoding="utf-8")
+
     excerpt = _extract_excerpt(article_markdown) or article_markdown[:180]
     return {
         "article_markdown": article_markdown,
@@ -183,5 +264,7 @@ def execute_text_job(
             "executor": "codex_cli",
             "codex_executable": codex_executable,
             "response_preview": article_markdown[:500],
+            "style_rewrite_attempts": style_rewrite_attempts,
+            "style_guard_failures": style_guard_failures,
         },
     }

@@ -15,7 +15,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from bunyang_longtail.cli import main
-from bunyang_longtail.codex_cli import CodexCLIExecutionError, _resolve_codex_executable, _validate_house_style
+from bunyang_longtail.codex_cli import (
+    CodexCLIExecutionError,
+    _resolve_codex_executable,
+    _validate_house_style,
+    execute_text_job as execute_text_job_codex_cli,
+)
 from bunyang_longtail.config import OPENAI_COMPAT_IMAGE_MODEL, OPENAI_COMPAT_TEXT_MODEL
 from bunyang_longtail.cron_publish import describe_unpublishable_run_result, select_publish_candidate
 from bunyang_longtail.prompt_builder import build_prompt_package
@@ -29,6 +34,7 @@ from bunyang_longtail.gpt_web import (
     _looks_like_generated_image_src,
     _resolve_google_login_credentials,
     _wait_for_image_response,
+    build_text_prompt,
 )
 from bunyang_longtail.local_image_fallback import _summary_points, _summary_source, render_fallback_thumbnail
 from bunyang_longtail.openai_compat import OpenAICompatExecutionError, probe_openai_compat
@@ -441,6 +447,67 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("판단이 맞습니다", rules)
         self.assertIn("안전합니다", rules)
         self.assertIn("그렇습니다.", rules)
+        self.assertNotIn("본문 끝에는 누가 이 전략이 맞는지", rules)
+
+    def test_build_text_prompt_uses_neutral_action_guide_phrase(self) -> None:
+        cluster = {
+            "outline_json": json.dumps(
+                [
+                    {"heading": "상단 요약", "points": ["핵심 1", "핵심 2"]},
+                    {"heading": "FAQ", "points": ["질문 1", "질문 2"]},
+                ],
+                ensure_ascii=False,
+            ),
+            "primary_keyword": "계약금",
+            "secondary_keyword": "중도금",
+            "comparison_keyword": "잔금",
+            "audience": "30대 맞벌이",
+            "search_intent": "계산",
+            "scenario": "월 상환액을 따질 때",
+        }
+        variant = {"title": "테스트 제목", "angle": "비교형"}
+        prompt = build_prompt_package(cluster, variant)
+        prompt_text = build_text_prompt(prompt)
+        self.assertIn("어떤 독자에게 더 적합한지 행동 가이드 1문장", prompt_text)
+        self.assertNotIn("이 전략에 맞는지", prompt_text)
+
+    def test_codex_execute_text_job_rewrites_after_style_guard_failure(self) -> None:
+        cluster = {
+            "outline_json": json.dumps(
+                [
+                    {"heading": "상단 요약", "points": ["핵심 1", "핵심 2"]},
+                    {"heading": "FAQ", "points": ["질문 1", "질문 2"]},
+                ],
+                ensure_ascii=False,
+            ),
+            "primary_keyword": "계약금",
+            "secondary_keyword": "중도금",
+            "comparison_keyword": "잔금",
+            "audience": "30대 맞벌이",
+            "search_intent": "계산",
+            "scenario": "월 상환액을 따질 때",
+        }
+        variant = {"title": "테스트 제목", "angle": "비교형"}
+        prompt = build_prompt_package(cluster, variant)
+        with patch(
+            "bunyang_longtail.codex_cli._resolve_codex_executable",
+            return_value="/home/kj/.npm-global/bin/codex",
+        ), patch(
+            "bunyang_longtail.codex_cli._run_codex_exec",
+            side_effect=[
+                "# 테스트 제목\n\n이 전략이 맞습니다.",
+                "# 테스트 제목\n\n이 경우에는 계약금 시점을 먼저 계산해 두는 편이 현실적입니다.",
+            ],
+        ):
+            result = execute_text_job_codex_cli(
+                job_id=999,
+                prompt_payload=prompt,
+                artifact_root=Path(self.tmpdir.name) / "codex_cli_artifacts",
+                workdir=Path(self.tmpdir.name),
+            )
+        self.assertEqual(result["response_payload"]["style_rewrite_attempts"], 1)
+        self.assertEqual(len(result["response_payload"]["style_guard_failures"]), 1)
+        self.assertNotIn("이 전략이 맞습니다", result["article_markdown"])
 
     def test_run_bundle_cli_simulate_completes_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=5, variants_per_cluster=1)
