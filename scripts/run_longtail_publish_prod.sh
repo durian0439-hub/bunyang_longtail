@@ -104,6 +104,9 @@ out_dir = OUTPUT_BASE / f'bundle_{bundle_id}'
 out_dir.mkdir(parents=True, exist_ok=True)
 
 cmd = [
+    '/usr/bin/xvfb-run',
+    '-a',
+    '--server-args=-screen 0 1440x1100x24',
     '/usr/bin/python3',
     'scripts/publish_bundle_to_naver.py',
     '--db', DB_PATH,
