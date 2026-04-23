@@ -22,6 +22,7 @@ from bunyang_longtail.naver_bundle_publish import (  # noqa: E402
     _persist_publish_result,
     build_publish_bundle,
     build_publish_title,
+    markdown_to_html,
     parse_publish_sections,
 )
 from bunyang_longtail.planner import list_variants, replenish_queue, stats  # noqa: E402
@@ -240,6 +241,17 @@ class TestNaverBundlePublish(unittest.TestCase):
             self.assertIn("## 분양 계약 전 체크리스트", bundle.markdown)
             self.assertIn("분양가 6억원이면 계약금 6천만원으로 끝나지 않습니다.", bundle.markdown)
             self.assertIn("[[IMAGE:4]]", bundle.markdown)
+
+    def test_markdown_to_html_renders_faq_questions_as_large_subheadings(self) -> None:
+        html = markdown_to_html(
+            "# 제목\n\n## 자주 묻는 질문\n\n### Q1. FAQ 질문도 제목처럼 보여야 하나요?\n네, 해시가 아니라 큰 글자로 보여야 합니다.\n\nQ2. 번호형 질문도 크게 보여야 하나요?\n네, FAQ 질문은 크게 보여야 합니다.\n\n---\n"
+        )
+
+        self.assertIn("<h3>Q1. <strong>FAQ</strong> 질문도 제목처럼 보여야 하나요?</h3>", html)
+        self.assertIn("<h3>Q2. 번호형 질문도 크게 보여야 하나요?</h3>", html)
+        self.assertIn("<hr>", html)
+        self.assertNotIn("### Q1.", html)
+        self.assertNotIn("<p>Q2. 번호형 질문도 크게 보여야 하나요?</p>", html)
 
     def test_build_gpt_publish_image_plans_ranking_matches_expected_slots(self) -> None:
         _, sections = parse_publish_sections(SAMPLE_ARTICLE, title_hint="1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까")

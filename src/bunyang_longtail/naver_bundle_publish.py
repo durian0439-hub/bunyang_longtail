@@ -1636,13 +1636,23 @@ def _emphasize_publish_text(line: str) -> str:
     return text
 
 
+def _is_faq_question_line(line: str) -> bool:
+    return bool(re.fullmatch(r"(?:###\s*)?Q(?:\d+)?\.\s+.+", str(line or "").strip()))
+
+
+def _normalize_faq_question_line(line: str) -> str:
+    return re.sub(r"^###\s*", "", str(line or "").strip())
+
+
 def markdown_to_html(markdown: str) -> str:
     html_lines: list[str] = [
         "<style>",
         "body{font-family:'Pretendard Variable','Pretendard','SUIT Variable','SUIT','Noto Sans KR','Noto Sans CJK KR',sans-serif;max-width:860px;margin:0 auto;padding:40px 24px 72px;line-height:1.85;color:#1f2937;background:#faf7f2;}",
-        "h1,h2,p{margin:0;} h1{font-size:28px;font-weight:800;line-height:1.28;color:#123a70;letter-spacing:-0.03em;margin-bottom:22px;}",
+        "h1,h2,h3,p,hr{margin:0;} h1{font-size:28px;font-weight:800;line-height:1.28;color:#123a70;letter-spacing:-0.03em;margin-bottom:22px;}",
         "h2{font-size:25px;font-weight:800;line-height:1.38;color:#123a70;letter-spacing:-0.02em;margin:38px 0 16px;padding-left:14px;border-left:5px solid #ea643f;}",
+        "h3{font-size:21px;font-weight:800;line-height:1.5;color:#111827;letter-spacing:-0.02em;margin:30px 0 10px;}",
         "p{font-size:18px;margin-top:14px;word-break:keep-all;} p strong{font-weight:800;color:#111827;}",
+        "hr{border:0;border-top:1px solid #e5e7eb;margin:32px 0;}",
         "</style>",
     ]
     for raw_line in str(markdown or "").splitlines():
@@ -1653,6 +1663,12 @@ def markdown_to_html(markdown: str) -> str:
             html_lines.append(f"<h1>{_emphasize_publish_text(line[2:].strip())}</h1>")
         elif line.startswith("## "):
             html_lines.append(f"<h2>{_emphasize_publish_text(line[3:].strip())}</h2>")
+        elif line.startswith("### "):
+            html_lines.append(f"<h3>{_emphasize_publish_text(line[4:].strip())}</h3>")
+        elif _is_faq_question_line(line):
+            html_lines.append(f"<h3>{_emphasize_publish_text(_normalize_faq_question_line(line))}</h3>")
+        elif line == "---":
+            html_lines.append("<hr>")
         elif re.fullmatch(r"\[\[IMAGE:\d+\]\]", line):
             html_lines.append(f"<p>{line}</p>")
         elif line.startswith("- "):
