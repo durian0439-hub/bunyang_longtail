@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from bunyang_longtail.cli import main
+from bunyang_longtail.codex_cli import CodexCLIExecutionError, _resolve_codex_executable
 from bunyang_longtail.config import OPENAI_COMPAT_IMAGE_MODEL, OPENAI_COMPAT_TEXT_MODEL
 from bunyang_longtail.database import connect, init_db, migrate_db
 from bunyang_longtail.gpt_web import (
@@ -348,6 +349,30 @@ class LongtailPlannerTest(unittest.TestCase):
             with self.assertRaises(OpenAICompatExecutionError) as exc_info:
                 probe_openai_compat(base_url="https://example.com")
         self.assertEqual(exc_info.exception.code, "OPENAI_COMPAT_API_KEY_MISSING")
+
+    def test_resolve_codex_executable_uses_known_fallback_path(self) -> None:
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "bunyang_longtail.codex_cli.shutil.which",
+            return_value=None,
+        ), patch(
+            "bunyang_longtail.codex_cli._is_executable",
+            side_effect=lambda path: str(path) == "/home/kj/.npm-global/bin/codex",
+        ):
+            resolved = _resolve_codex_executable()
+        self.assertEqual(resolved, "/home/kj/.npm-global/bin/codex")
+
+    def test_resolve_codex_executable_raises_clear_error_when_missing(self) -> None:
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "bunyang_longtail.codex_cli.shutil.which",
+            return_value=None,
+        ), patch(
+            "bunyang_longtail.codex_cli._is_executable",
+            return_value=False,
+        ):
+            with self.assertRaises(CodexCLIExecutionError) as exc_info:
+                _resolve_codex_executable()
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_NOT_FOUND")
+        self.assertIn("PATH", str(exc_info.exception))
 
     def test_run_bundle_cli_simulate_completes_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=5, variants_per_cluster=1)

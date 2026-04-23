@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PATH="/home/kj/.npm-global/bin:/home/kj/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+
 DEV_ROOT="/home/kj/app/bunyang_longtail/dev"
 PROD_ROOT="/home/kj/app/bunyang_longtail/prod"
 DB_PATH="$DEV_ROOT/data/cdp_probe5.sqlite3"

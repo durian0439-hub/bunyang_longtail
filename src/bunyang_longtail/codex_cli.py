@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,12 +19,51 @@ class CodexCLIExecutionError(RuntimeError):
         self.artifact_dir = artifact_dir
 
 
+KNOWN_CODEX_PATHS = (
+    Path.home() / ".npm-global/bin/codex",
+    Path("/home/kj/.npm-global/bin/codex"),
+    Path.home() / ".local/bin/codex",
+    Path("/usr/local/bin/codex"),
+    Path("/usr/bin/codex"),
+)
+
 
 def _artifact_dir(job_id: int, artifact_root: str | Path | None = None) -> Path:
     base = Path(artifact_root) if artifact_root else Path("/home/kj/app/bunyang_longtail/dev/data/codex_cli_artifacts")
     path = base / f"text_job_{job_id}"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+
+def _is_executable(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+
+def _resolve_codex_executable() -> str:
+    for env_name in ("CODEX_BIN", "CODEX_CLI_BIN"):
+        raw = os.environ.get(env_name)
+        if not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if _is_executable(candidate):
+            return str(candidate)
+
+    resolved = shutil.which("codex")
+    if resolved:
+        return resolved
+
+    for candidate in KNOWN_CODEX_PATHS:
+        if _is_executable(candidate):
+            return str(candidate)
+
+    searched = [str(path) for path in KNOWN_CODEX_PATHS]
+    raise CodexCLIExecutionError(
+        "Codex CLI 실행 파일을 찾지 못했습니다. PATH 또는 CODEX_BIN을 확인하세요. "
+        f"PATH={os.environ.get('PATH', '')} searched={searched}",
+        code="CODEX_CLI_NOT_FOUND",
+    )
 
 
 
@@ -64,8 +105,9 @@ def execute_text_job(
     output_file = artifact_dir / "last_message.txt"
     prompt_file.write_text(prompt_text, encoding="utf-8")
 
+    codex_executable = _resolve_codex_executable()
     cmd = [
-        "codex",
+        codex_executable,
         "exec",
         "--skip-git-repo-check",
         "-C",
@@ -74,7 +116,14 @@ def execute_text_job(
         str(output_file),
         "아래 지침대로 네이버 블로그용 한국어 마크다운 본문만 작성하세요. 불필요한 설명 없이 본문만 출력하세요.\n\n" + prompt_text,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+    except FileNotFoundError as exc:
+        raise CodexCLIExecutionError(
+            f"Codex CLI 실행 파일 호출 실패: {exc}",
+            code="CODEX_CLI_NOT_FOUND",
+            artifact_dir=str(artifact_dir),
+        ) from exc
     (artifact_dir / "stdout.log").write_text(proc.stdout or "", encoding="utf-8")
     (artifact_dir / "stderr.log").write_text(proc.stderr or "", encoding="utf-8")
     if proc.returncode != 0:
@@ -103,6 +152,7 @@ def execute_text_job(
         "response_payload": {
             "artifact_dir": str(artifact_dir),
             "executor": "codex_cli",
+            "codex_executable": codex_executable,
             "response_preview": article_markdown[:500],
         },
     }
