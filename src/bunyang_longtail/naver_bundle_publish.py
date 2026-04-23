@@ -128,6 +128,19 @@ class PublishBundle:
     body_html: str
     meta_path: str
     assets: list[PublishAsset]
+    image_provider: str
+    image_provider_requested: str
+    image_provider_fallback_from: str | None = None
+    image_provider_fallback_reason: str | None = None
+
+
+@dataclass
+class PublishAssetRenderResult:
+    assets: list[PublishAsset]
+    image_provider: str
+    image_provider_requested: str
+    image_provider_fallback_from: str | None = None
+    image_provider_fallback_reason: str | None = None
 
 
 def _clean(value: Any) -> str:
@@ -1459,24 +1472,13 @@ def _is_visually_blank_publish_image(asset_path: str | Path) -> bool:
 
 
 
-def render_publish_assets(
+def _render_publish_assets_local(
     *,
     title: str,
     sections: list[PublishSection],
     output_dir: str | Path,
-    image_provider: str = "local",
     inline_table_specs: list[dict[str, Any]] | None = None,
 ) -> list[PublishAsset]:
-    resolved_provider = _resolve_publish_image_provider(image_provider)
-    if resolved_provider != "local":
-        return _render_gpt_publish_assets(
-            title=title,
-            sections=sections,
-            output_dir=output_dir,
-            provider=resolved_provider,
-            inline_table_specs=inline_table_specs,
-        )
-
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -1594,6 +1596,76 @@ def render_publish_assets(
         )
     assets.extend(_render_inline_table_assets_local(title=title, inline_table_specs=inline_table_specs or [], output_dir=output_root))
     return assets
+
+
+
+def _render_publish_assets_result(
+    *,
+    title: str,
+    sections: list[PublishSection],
+    output_dir: str | Path,
+    image_provider: str = "local",
+    inline_table_specs: list[dict[str, Any]] | None = None,
+) -> PublishAssetRenderResult:
+    requested_provider = _clean(image_provider or "local").lower() or "local"
+    resolved_provider = _resolve_publish_image_provider(image_provider)
+    if resolved_provider == "local":
+        return PublishAssetRenderResult(
+            assets=_render_publish_assets_local(
+                title=title,
+                sections=sections,
+                output_dir=output_dir,
+                inline_table_specs=inline_table_specs,
+            ),
+            image_provider="local",
+            image_provider_requested=requested_provider,
+        )
+
+    try:
+        assets = _render_gpt_publish_assets(
+            title=title,
+            sections=sections,
+            output_dir=output_dir,
+            provider=resolved_provider,
+            inline_table_specs=inline_table_specs,
+        )
+        return PublishAssetRenderResult(
+            assets=assets,
+            image_provider=resolved_provider,
+            image_provider_requested=requested_provider,
+        )
+    except RuntimeError as exc:
+        fallback_assets = _render_publish_assets_local(
+            title=title,
+            sections=sections,
+            output_dir=output_dir,
+            inline_table_specs=inline_table_specs,
+        )
+        return PublishAssetRenderResult(
+            assets=fallback_assets,
+            image_provider="local",
+            image_provider_requested=requested_provider,
+            image_provider_fallback_from=resolved_provider,
+            image_provider_fallback_reason=str(exc),
+        )
+
+
+
+def render_publish_assets(
+    *,
+    title: str,
+    sections: list[PublishSection],
+    output_dir: str | Path,
+    image_provider: str = "local",
+    inline_table_specs: list[dict[str, Any]] | None = None,
+) -> list[PublishAsset]:
+    return _render_publish_assets_result(
+        title=title,
+        sections=sections,
+        output_dir=output_dir,
+        image_provider=image_provider,
+        inline_table_specs=inline_table_specs,
+    ).assets
 
 
 INLINE_TABLE_MARKER_RE = re.compile(r"\[\[INLINE_TABLE:([A-Za-z0-9_-]+)\]\]")
@@ -1946,7 +2018,7 @@ def build_publish_bundle(
     output_dir = Path(output_root).resolve()
     images_dir = output_dir / "images"
     sections, inline_table_specs = _extract_inline_markdown_table_specs(sections)
-    assets = render_publish_assets(
+    asset_result = _render_publish_assets_result(
         title=publish_title,
         sections=sections,
         output_dir=images_dir,
@@ -1956,7 +2028,7 @@ def build_publish_bundle(
     min_publish_side_px = int(str(os.getenv("NAVER_BLOG_MIN_IMAGE_SIDE_PX", "800")).strip() or "800")
     assets = [
         PublishAsset(slot=asset.slot, kind=asset.kind, label=asset.label, path=_ensure_publish_asset_min_side(asset.path, min_publish_side_px))
-        for asset in assets
+        for asset in asset_result.assets
     ]
     markdown = build_publish_markdown(title=publish_title, sections=sections, assets=assets, related_links=related_links)
     body_html = markdown_to_html(markdown)
@@ -1968,8 +2040,12 @@ def build_publish_bundle(
         "assets": [asset.__dict__ for asset in assets],
         "images": [asset.path for asset in assets],
         "tags": tags,
-        "image_provider": _resolve_publish_image_provider(image_provider),
+        "image_provider": asset_result.image_provider,
+        "image_provider_requested": asset_result.image_provider_requested,
     }
+    if asset_result.image_provider_fallback_from:
+        meta["image_provider_fallback_from"] = asset_result.image_provider_fallback_from
+        meta["image_provider_fallback_reason"] = asset_result.image_provider_fallback_reason
     meta_path = output_dir / "publish_bundle.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1984,6 +2060,10 @@ def build_publish_bundle(
         body_html=body_html,
         meta_path=str(meta_path),
         assets=assets,
+        image_provider=asset_result.image_provider,
+        image_provider_requested=asset_result.image_provider_requested,
+        image_provider_fallback_from=asset_result.image_provider_fallback_from,
+        image_provider_fallback_reason=asset_result.image_provider_fallback_reason,
     )
 
 
@@ -2089,7 +2169,11 @@ def publish_bundle_to_naver(
     result["ok"] = ok
     result["bundle_id"] = bundle_id
     result["meta_path"] = publish_bundle.meta_path
-    result["image_provider"] = _resolve_publish_image_provider(image_provider)
+    result["image_provider"] = publish_bundle.image_provider
+    result["image_provider_requested"] = publish_bundle.image_provider_requested
+    if publish_bundle.image_provider_fallback_from:
+        result["image_provider_fallback_from"] = publish_bundle.image_provider_fallback_from
+        result["image_provider_fallback_reason"] = publish_bundle.image_provider_fallback_reason
     result["publish_review"] = {
         "viewer_url_present": bool(result.get("current_url")),
         "viewer_image_count_matches": result.get("viewer_image_count") == len(publish_bundle.images),

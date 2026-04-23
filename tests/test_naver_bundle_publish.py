@@ -223,9 +223,34 @@ class TestNaverBundlePublish(unittest.TestCase):
             self.assertEqual(meta["bundle_id"], 1)
             self.assertEqual(len(meta["images"]), 4)
             self.assertEqual(meta["image_provider"], "local")
+            self.assertEqual(bundle.image_provider, "local")
             self.assertTrue(all(Path(path).is_absolute() for path in meta["images"]))
             self.assertIn("30대 맞벌이 청약은 막연히 불리한 게임이 아니라, 어떤 공급에서 판단하느냐에 따라 결과가 크게 갈립니다.", bundle.markdown)
             self.assertIn("## 청약 1순위 FAQ", bundle.markdown)
+
+    def test_build_publish_bundle_falls_back_to_local_when_gpt_image_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            target,
+            "_render_gpt_publish_assets",
+            side_effect=RuntimeError("GPT 이미지 생성 실패: 요약 카드, provider=gpt_web, 응답 없음"),
+        ):
+            bundle = build_publish_bundle(
+                bundle_id=99,
+                variant_title="기관추천 특별공급 배우자 이력이 있을 때, 노부모 부양 세대도 가능할까",
+                article_markdown=SPARSE_INSTITUTION_ARTICLE,
+                output_root=tmpdir,
+                image_provider="gpt_web",
+            )
+            meta = json.loads(Path(bundle.meta_path).read_text(encoding="utf-8"))
+            self.assertEqual(bundle.image_provider, "local")
+            self.assertEqual(bundle.image_provider_requested, "gpt_web")
+            self.assertEqual(bundle.image_provider_fallback_from, "gpt_web")
+            self.assertIn("GPT 이미지 생성 실패", bundle.image_provider_fallback_reason or "")
+            self.assertEqual(meta["image_provider"], "local")
+            self.assertEqual(meta["image_provider_requested"], "gpt_web")
+            self.assertEqual(meta["image_provider_fallback_from"], "gpt_web")
+            self.assertIn("GPT 이미지 생성 실패", meta["image_provider_fallback_reason"])
+            self.assertTrue(all(Path(path).exists() for path in bundle.images))
 
     def test_parse_publish_sections_supports_markdown_headings(self) -> None:
         original_title, sections = parse_publish_sections(
