@@ -15,8 +15,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from bunyang_longtail.cli import main
-from bunyang_longtail.codex_cli import CodexCLIExecutionError, _resolve_codex_executable
+from bunyang_longtail.codex_cli import CodexCLIExecutionError, _resolve_codex_executable, _validate_house_style
 from bunyang_longtail.config import OPENAI_COMPAT_IMAGE_MODEL, OPENAI_COMPAT_TEXT_MODEL
+from bunyang_longtail.prompt_builder import build_prompt_package
 from bunyang_longtail.database import connect, init_db, migrate_db
 from bunyang_longtail.gpt_web import (
     GptWebExecutionError,
@@ -373,6 +374,28 @@ class LongtailPlannerTest(unittest.TestCase):
                 _resolve_codex_executable()
         self.assertEqual(exc_info.exception.code, "CODEX_CLI_NOT_FOUND")
         self.assertIn("PATH", str(exc_info.exception))
+
+    def test_validate_house_style_rejects_banned_phrase(self) -> None:
+        with self.assertRaises(CodexCLIExecutionError) as exc_info:
+            _validate_house_style("# 제목\n\n이 경우 공급유형부터 나눠야 판단이 맞습니다.")
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
+    def test_build_prompt_package_includes_house_style_guards(self) -> None:
+        cluster = {
+            "outline_json": json.dumps({"sections": []}, ensure_ascii=False),
+            "primary_keyword": "1순위 조건",
+            "secondary_keyword": "특별공급",
+            "comparison_keyword": "일반공급",
+            "audience": "30대 맞벌이",
+            "search_intent": "가능여부",
+            "scenario": "기준이 헷갈릴 때",
+        }
+        variant = {"title": "테스트 제목", "angle": "실수방지형"}
+        prompt = build_prompt_package(cluster, variant)
+        rules = "\n".join(prompt["user"]["writing_rules"] + prompt["user"]["quality_gates"])
+        self.assertIn("판단이 맞습니다", rules)
+        self.assertIn("안전합니다", rules)
+        self.assertIn("그렇습니다.", rules)
 
     def test_run_bundle_cli_simulate_completes_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=5, variants_per_cluster=1)

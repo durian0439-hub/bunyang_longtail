@@ -27,6 +27,12 @@ KNOWN_CODEX_PATHS = (
     Path("/usr/bin/codex"),
 )
 
+BANNED_STYLE_PATTERNS = (
+    r"판단이 맞습니다",
+    r"보는 게 맞습니다",
+    r"이 전략이 맞습니다",
+)
+
 
 def _artifact_dir(job_id: int, artifact_root: str | Path | None = None) -> Path:
     base = Path(artifact_root) if artifact_root else Path("/home/kj/app/bunyang_longtail/dev/data/codex_cli_artifacts")
@@ -64,6 +70,28 @@ def _resolve_codex_executable() -> str:
         f"PATH={os.environ.get('PATH', '')} searched={searched}",
         code="CODEX_CLI_NOT_FOUND",
     )
+
+
+
+def _validate_house_style(article_markdown: str) -> None:
+    for pattern in BANNED_STYLE_PATTERNS:
+        if re.search(pattern, article_markdown):
+            raise CodexCLIExecutionError(
+                f"금지된 상투 표현이 감지됐습니다: {pattern}",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+
+    if article_markdown.count("안전합니다") > 2:
+        raise CodexCLIExecutionError(
+            "'안전합니다' 표현이 과도하게 반복됐습니다.",
+            code="CODEX_CLI_STYLE_GUARD_FAILED",
+        )
+
+    if re.search(r"(^|\n)Q[^\n]*\n그렇습니다\.", article_markdown):
+        raise CodexCLIExecutionError(
+            "FAQ 답변이 '그렇습니다.'로 시작합니다.",
+            code="CODEX_CLI_STYLE_GUARD_FAILED",
+        )
 
 
 
@@ -145,6 +173,7 @@ def execute_text_job(
             code="CODEX_CLI_EMPTY_OUTPUT",
             artifact_dir=str(artifact_dir),
         )
+    _validate_house_style(article_markdown)
     excerpt = _extract_excerpt(article_markdown) or article_markdown[:180]
     return {
         "article_markdown": article_markdown,
