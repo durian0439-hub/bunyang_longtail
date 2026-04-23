@@ -23,6 +23,8 @@ def main() -> int:
     parser.add_argument("--title")
     parser.add_argument("--output-root")
     parser.add_argument("--image-provider", choices=["local", "auto", "gpt_web", "openai_compat"], default="auto")
+    parser.add_argument("--category-no")
+    parser.add_argument("--category-name")
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -34,6 +36,8 @@ def main() -> int:
         mode=args.mode,
         title_override=args.title,
         image_provider=args.image_provider,
+        category_no=args.category_no,
+        category_name=args.category_name,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status") == "ok" else 1

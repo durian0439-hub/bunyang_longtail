@@ -2,6 +2,8 @@
 set -euo pipefail
 
 export PATH="/home/kj/.npm-global/bin:/home/kj/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+export LONGTAIL_NAVER_CATEGORY_NO="${LONGTAIL_NAVER_CATEGORY_NO:-16}"
+export LONGTAIL_NAVER_CATEGORY_NAME="${LONGTAIL_NAVER_CATEGORY_NAME:-How To 분양}"
 
 DEV_ROOT="/home/kj/app/bunyang_longtail/dev"
 PROD_ROOT="/home/kj/app/bunyang_longtail/prod"
@@ -103,6 +105,8 @@ bundle_id = run_result['bundle']['id']
 out_dir = OUTPUT_BASE / f'bundle_{bundle_id}'
 out_dir.mkdir(parents=True, exist_ok=True)
 
+import os
+
 cmd = [
     '/usr/bin/xvfb-run',
     '-a',
@@ -113,6 +117,8 @@ cmd = [
     '--bundle-id', str(bundle_id),
     '--mode', 'publish',
     '--image-provider', 'gpt_web',
+    '--category-no', os.environ.get('LONGTAIL_NAVER_CATEGORY_NO', '16'),
+    '--category-name', os.environ.get('LONGTAIL_NAVER_CATEGORY_NAME', 'How To 분양'),
     '--output-root', str(out_dir),
 ]
 result = subprocess.run(cmd, capture_output=True, text=True)

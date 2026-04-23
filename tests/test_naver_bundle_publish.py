@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -14,12 +16,16 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import bunyang_longtail.naver_bundle_publish as target  # noqa: E402
+from bunyang_longtail.database import init_db, migrate_db  # noqa: E402
 from bunyang_longtail.naver_bundle_publish import (  # noqa: E402
     _build_gpt_publish_image_plans,
+    _persist_publish_result,
     build_publish_bundle,
     build_publish_title,
     parse_publish_sections,
 )
+from bunyang_longtail.planner import list_variants, replenish_queue, stats  # noqa: E402
+from bunyang_longtail.workers import complete_text_job, queue_text_job, start_job  # noqa: E402
 
 
 SAMPLE_ARTICLE = """1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까
@@ -89,6 +95,68 @@ SPARSE_CASHFLOW_ARTICLE = """# 계약금 중도금 잔금 계약금이 빠듯할
 
 
 class TestNaverBundlePublish(unittest.TestCase):
+    def test_persist_publish_result_marks_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.sqlite3"
+            init_db(db_path)
+            migrate_db(db_path)
+            replenish_queue(db_path, min_queued=5, variants_per_cluster=1)
+            variant_id = list_variants(db_path, status="queued", limit=1)[0]["id"]
+            queued = queue_text_job(db_path, variant_id=variant_id)
+            start_job(db_path, queued["job_id"])
+            complete_text_job(
+                db_path,
+                job_id=queued["job_id"],
+                article_markdown="# 본문\n\n결론 먼저 씁니다.",
+            )
+
+            _persist_publish_result(
+                db_path,
+                {"variant_id": variant_id},
+                {"ok": True, "current_url": "https://blog.naver.com/example/1"},
+            )
+
+            summary = stats(db_path)
+            self.assertEqual(summary["publish_history"], 1)
+            status_map = {row["status"]: row["cnt"] for row in summary["by_status"]}
+            self.assertEqual(status_map.get("published"), 1)
+
+    def test_publish_bundle_script_forwards_category_args(self) -> None:
+        script_path = ROOT / "scripts" / "publish_bundle_to_naver.py"
+        spec = importlib.util.spec_from_file_location("publish_bundle_script", script_path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        with patch.object(
+            module,
+            "publish_bundle_to_naver",
+            return_value={"status": "ok"},
+        ) as mocked_publish, patch.object(
+            sys,
+            "argv",
+            [
+                "publish_bundle_to_naver.py",
+                "--db",
+                "test.sqlite3",
+                "--bundle-id",
+                "20",
+                "--mode",
+                "publish",
+                "--category-no",
+                "16",
+                "--category-name",
+                "How To 분양",
+            ],
+        ):
+            exit_code = module.main()
+
+        self.assertEqual(exit_code, 0)
+        kwargs = mocked_publish.call_args.kwargs
+        self.assertEqual(kwargs["category_no"], "16")
+        self.assertEqual(kwargs["category_name"], "How To 분양")
+
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "blank.png"

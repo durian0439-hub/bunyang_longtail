@@ -1752,6 +1752,19 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
     }
 
 
+def _persist_publish_result(db_path: str | Path, article: dict[str, Any], result: dict[str, Any]) -> None:
+    if not result.get("ok"):
+        return
+
+    publish_url = _clean(str(result.get("current_url") or result.get("url") or result.get("naver_url") or ""))
+    if not publish_url:
+        raise RuntimeError("네이버 발행은 성공했지만 저장할 URL이 결과에 없습니다.")
+
+    from .planner import mark_published
+
+    mark_published(db_path, int(article["variant_id"]), publish_url)
+
+
 def publish_bundle_to_naver(
     *,
     db_path: str | Path,
@@ -1810,4 +1823,5 @@ def publish_bundle_to_naver(
         "no_low_res_images": int(result.get("viewer_low_res_image_count") or 0) == 0,
         "manual_review_required": bool(result.get("manual_review_required")),
     }
+    _persist_publish_result(db_path, article, result)
     return result
