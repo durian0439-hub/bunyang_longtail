@@ -276,19 +276,22 @@ class TestNaverBundlePublish(unittest.TestCase):
         self.assertNotIn("### Q1.", html)
         self.assertNotIn("<p>Q2. 번호형 질문도 크게 보여야 하나요?</p>", html)
 
-    def test_inline_markdown_table_is_converted_to_table_image(self) -> None:
+    def test_inline_markdown_table_is_converted_to_visual_slot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             _, sections = parse_publish_sections(
                 INLINE_TABLE_ARTICLE,
                 title_hint="기관추천 특별공급과 일반공급, 노부모 부양 세대는 무엇이 다를까",
             )
-            cleaned_sections, table_assets = target._extract_inline_markdown_table_assets(
+            cleaned_sections, inline_specs = target._extract_inline_markdown_table_specs(sections)
+            table_assets = target._render_inline_table_assets_local(
                 title="기관추천 특별공급과 일반공급 노부모 부양 세대는 무엇이 다를까",
-                sections=sections,
+                inline_table_specs=inline_specs,
                 output_dir=tmpdir,
             )
 
+            self.assertEqual(len(inline_specs), 1)
             self.assertEqual(len(table_assets), 1)
+            self.assertEqual(inline_specs[0]["slot"], "__inline_table__:t01")
             self.assertTrue(Path(table_assets[0].path).exists())
             self.assertTrue(any("[[INLINE_TABLE:" in line for section in cleaned_sections for line in section.lines))
             self.assertFalse(any("| --- |" in line for section in cleaned_sections for line in section.lines))
@@ -301,6 +304,22 @@ class TestNaverBundlePublish(unittest.TestCase):
             self.assertIn("[[IMAGE:1]]", markdown)
             self.assertNotIn("| 비교 항목 |", markdown)
             self.assertNotIn("| --- |", markdown)
+
+    def test_inline_markdown_table_creates_gpt_decision_board_plan(self) -> None:
+        _, sections = parse_publish_sections(
+            INLINE_TABLE_ARTICLE,
+            title_hint="기관추천 특별공급과 일반공급, 노부모 부양 세대는 무엇이 다를까",
+        )
+        cleaned_sections, inline_specs = target._extract_inline_markdown_table_specs(sections)
+        plans = _build_gpt_publish_image_plans(
+            "기관추천 특별공급과 일반공급 노부모 부양 세대는 무엇이 다를까",
+            cleaned_sections,
+            inline_table_specs=inline_specs,
+        )
+        inline_plan = next(plan for plan in plans if plan.slot == "__inline_table__:t01")
+        self.assertEqual(inline_plan.kind, "decision_board")
+        self.assertIn("Do not render a spreadsheet", inline_plan.prompt_text)
+        self.assertIn("hand-drawn chalkboard decision board", inline_plan.prompt_text)
 
     def test_render_table_image_uses_chalkboard_style(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

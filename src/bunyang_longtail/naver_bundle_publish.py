@@ -1174,6 +1174,11 @@ def _visual_prompt_style(raw_heading: str, kind: str) -> str:
             "Create a Korean comparison board with two large side-by-side cards. Left is one option, right is the other option. "
             "Use contrast colors and a clear versus structure. Do not add extra mini boxes beyond the two main cards and one small verdict strip. "
         )
+    if kind == "decision_board":
+        return (
+            "Create a Korean decision board derived from a table. Put one huge central keyword or verdict, one left checklist column, one right why-it-matters column, and one small bottom reminder strip. "
+            "Do not draw spreadsheet cells, rigid grid lines, or a literal matrix table. It should feel like a hand-drawn chalkboard judgment board. "
+        )
     if kind in {"checklist", "mini_checklist"}:
         return (
             "Create a Korean checklist board with large checkboxes, short action items, and one highlighted warning note. "
@@ -1251,7 +1256,49 @@ def _spec_prompt_text(title: str, spec: dict[str, Any]) -> str:
 
 
 
-def _build_gpt_publish_image_plans(title: str, sections: list[PublishSection]) -> list[PublishImagePlan]:
+def _inline_table_visual_kind(spec: dict[str, Any]) -> str:
+    label = _clean(spec.get("label"))
+    headers = [_clean(header) for header in spec.get("headers", []) if _clean(header)]
+    if "체크리스트" in label:
+        return "mini_checklist"
+    if len(headers) >= 3:
+        return "decision_board"
+    return "focus"
+
+
+
+def _inline_table_prompt_text(title: str, spec: dict[str, Any]) -> str:
+    headers = [_clean(header) for header in spec.get("headers", []) if _clean(header)]
+    rows = [list(row) for row in spec.get("rows", [])[:4]]
+    label = _clean(spec.get("label")) or "표 시각화 자료"
+    kind = _inline_table_visual_kind(spec)
+    detail_lines: list[str] = [label, *headers[:3]]
+    for row in rows:
+        cells = [_clean(cell) for cell in row if _clean(cell)]
+        if not cells:
+            continue
+        if len(cells) >= 3:
+            detail_lines.append(f"{cells[0]} / {cells[1]} / {cells[2]}")
+        elif len(cells) == 2:
+            detail_lines.append(f"{cells[0]} / {cells[1]}")
+        else:
+            detail_lines.append(cells[0])
+    prompt = _chalkboard_explainer_prompt(title=title, focus_title=label, detail_lines=detail_lines[:6], kind=kind)
+    if kind == "decision_board":
+        prompt += (
+            " This visual is derived from a markdown table. Do not render a spreadsheet, grid table, cell matrix, or white card. "
+            "Use one huge center keyword, one left checklist area, one right why-it-matters area, and one small bottom reminder strip. "
+            "Make it look like a hand-drawn chalkboard decision board, not a literal table screenshot."
+        )
+    return prompt
+
+
+
+def _build_gpt_publish_image_plans(
+    title: str,
+    sections: list[PublishSection],
+    inline_table_specs: list[dict[str, Any]] | None = None,
+) -> list[PublishImagePlan]:
     plans: list[PublishImagePlan] = [
         PublishImagePlan(
             slot="lead",
@@ -1283,15 +1330,34 @@ def _build_gpt_publish_image_plans(title: str, sections: list[PublishSection]) -
                 prompt_text=_spec_prompt_text(title, spec),
             )
         )
+
+    for spec in inline_table_specs or []:
+        label = _clean(spec.get("label")) or "표 시각화 자료"
+        plans.append(
+            PublishImagePlan(
+                slot=str(spec.get("slot") or "__inline_table__:unknown"),
+                kind=_inline_table_visual_kind(spec),
+                label=label,
+                image_role="section_visual",
+                prompt_text=_inline_table_prompt_text(title, spec),
+            )
+        )
     return plans
 
 
-def _render_gpt_publish_assets(*, title: str, sections: list[PublishSection], output_dir: str | Path, provider: str) -> list[PublishAsset]:
+def _render_gpt_publish_assets(
+    *,
+    title: str,
+    sections: list[PublishSection],
+    output_dir: str | Path,
+    provider: str,
+    inline_table_specs: list[dict[str, Any]] | None = None,
+) -> list[PublishAsset]:
     resolved_provider = _resolve_publish_image_provider(provider)
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
     excerpt = _publish_image_excerpt(title, sections)
-    plans = _build_gpt_publish_image_plans(title, sections)
+    plans = _build_gpt_publish_image_plans(title, sections, inline_table_specs=inline_table_specs)
     assets: list[PublishAsset] = []
     job_seed = int(time.time() * 1000)
 
@@ -1393,10 +1459,23 @@ def _is_visually_blank_publish_image(asset_path: str | Path) -> bool:
 
 
 
-def render_publish_assets(*, title: str, sections: list[PublishSection], output_dir: str | Path, image_provider: str = "local") -> list[PublishAsset]:
+def render_publish_assets(
+    *,
+    title: str,
+    sections: list[PublishSection],
+    output_dir: str | Path,
+    image_provider: str = "local",
+    inline_table_specs: list[dict[str, Any]] | None = None,
+) -> list[PublishAsset]:
     resolved_provider = _resolve_publish_image_provider(image_provider)
     if resolved_provider != "local":
-        return _render_gpt_publish_assets(title=title, sections=sections, output_dir=output_dir, provider=resolved_provider)
+        return _render_gpt_publish_assets(
+            title=title,
+            sections=sections,
+            output_dir=output_dir,
+            provider=resolved_provider,
+            inline_table_specs=inline_table_specs,
+        )
 
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1444,6 +1523,7 @@ def render_publish_assets(*, title: str, sections: list[PublishSection], output_
             output_path=output_root / "03_checklist_card.png",
         )
         assets.append(PublishAsset(slot=checklist_slot, kind="checklist", label="청약 1순위 체크리스트 카드", path=str(Path(checklist_path).resolve())))
+        assets.extend(_render_inline_table_assets_local(title=title, inline_table_specs=inline_table_specs or [], output_dir=output_root))
         return assets
 
     if topic == "cashflow":
@@ -1493,6 +1573,7 @@ def render_publish_assets(*, title: str, sections: list[PublishSection], output_
             output_path=output_root / "04_checklist_card.png",
         )
         assets.append(PublishAsset(slot=checklist_slot, kind="checklist", label="계약 전 체크리스트 카드", path=str(Path(checklist_path).resolve())))
+        assets.extend(_render_inline_table_assets_local(title=title, inline_table_specs=inline_table_specs or [], output_dir=output_root))
         return assets
 
     for spec in _table_specs(title, sections):
@@ -1511,6 +1592,7 @@ def render_publish_assets(*, title: str, sections: list[PublishSection], output_
                 path=str(Path(table_path).resolve()),
             )
         )
+    assets.extend(_render_inline_table_assets_local(title=title, inline_table_specs=inline_table_specs or [], output_dir=output_root))
     return assets
 
 
@@ -1549,17 +1631,12 @@ def _inline_table_asset_slot(table_id: str) -> str:
     return f"__inline_table__:{table_id}"
 
 
-def _extract_inline_markdown_table_assets(
-    *,
-    title: str,
+def _extract_inline_markdown_table_specs(
     sections: list[PublishSection],
-    output_dir: str | Path,
-) -> tuple[list[PublishSection], list[PublishAsset]]:
-    assets: list[PublishAsset] = []
+) -> tuple[list[PublishSection], list[dict[str, Any]]]:
+    specs: list[dict[str, Any]] = []
     cleaned_sections: list[PublishSection] = []
     table_seq = 1
-    output_root = Path(output_dir)
-    output_root.mkdir(parents=True, exist_ok=True)
 
     for section in sections:
         cleaned_lines: list[str] = []
@@ -1580,20 +1657,14 @@ def _extract_inline_markdown_table_assets(
                 if rows:
                     table_id = f"t{table_seq:02d}"
                     table_seq += 1
-                    table_path = render_table_image(
-                        title=title,
-                        label=f"{section.publish_heading} 표 정리",
-                        headers=header_cells,
-                        rows=rows,
-                        output_path=output_root / f"inline_table_{table_id}.png",
-                    )
-                    assets.append(
-                        PublishAsset(
-                            slot=_inline_table_asset_slot(table_id),
-                            kind="table",
-                            label=f"{section.publish_heading} 표 정리",
-                            path=str(Path(table_path).resolve()),
-                        )
+                    specs.append(
+                        {
+                            "slot": _inline_table_asset_slot(table_id),
+                            "file_name": f"inline_table_{table_id}.png",
+                            "label": f"{section.publish_heading} 시각화 자료",
+                            "headers": header_cells,
+                            "rows": rows,
+                        }
                     )
                     cleaned_lines.append(_inline_table_marker(table_id))
                     index = row_index
@@ -1610,7 +1681,36 @@ def _extract_inline_markdown_table_assets(
             )
         )
 
-    return cleaned_sections, assets
+    return cleaned_sections, specs
+
+
+
+def _render_inline_table_assets_local(
+    *,
+    title: str,
+    inline_table_specs: list[dict[str, Any]],
+    output_dir: str | Path,
+) -> list[PublishAsset]:
+    output_root = Path(output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
+    assets: list[PublishAsset] = []
+    for spec in inline_table_specs:
+        table_path = render_table_image(
+            title=title,
+            label=str(spec.get("label") or "표 정리"),
+            headers=[str(cell) for cell in spec.get("headers", [])],
+            rows=[[str(cell) for cell in row] for row in spec.get("rows", [])],
+            output_path=output_root / str(spec.get("file_name") or "inline_table.png"),
+        )
+        assets.append(
+            PublishAsset(
+                slot=str(spec.get("slot") or "__inline_table__:unknown"),
+                kind="table",
+                label=str(spec.get("label") or "표 정리"),
+                path=str(Path(table_path).resolve()),
+            )
+        )
+    return assets
 
 
 def _append_section_publish_lines(lines: list[str], section_lines: list[str], inline_table_indexes: dict[str, int]) -> None:
@@ -1845,13 +1945,14 @@ def build_publish_bundle(
     publish_title = title_override or build_publish_title(variant_title or original_title)
     output_dir = Path(output_root).resolve()
     images_dir = output_dir / "images"
-    sections, inline_table_assets = _extract_inline_markdown_table_assets(
+    sections, inline_table_specs = _extract_inline_markdown_table_specs(sections)
+    assets = render_publish_assets(
         title=publish_title,
         sections=sections,
         output_dir=images_dir,
+        image_provider=image_provider,
+        inline_table_specs=inline_table_specs,
     )
-    assets = render_publish_assets(title=publish_title, sections=sections, output_dir=images_dir, image_provider=image_provider)
-    assets.extend(inline_table_assets)
     min_publish_side_px = int(str(os.getenv("NAVER_BLOG_MIN_IMAGE_SIDE_PX", "800")).strip() or "800")
     assets = [
         PublishAsset(slot=asset.slot, kind=asset.kind, label=asset.label, path=_ensure_publish_asset_min_side(asset.path, min_publish_side_px))
