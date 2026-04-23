@@ -94,6 +94,29 @@ SPARSE_CASHFLOW_ARTICLE = """# 계약금 중도금 잔금 계약금이 빠듯할
 - 자금 계획과 중도금 일정 확인
 """
 
+INLINE_TABLE_ARTICLE = """기관추천 특별공급과 일반공급, 노부모 부양 세대는 무엇이 다를까
+상단 요약
+
+노부모 부양 세대라고 해서 기관추천 특별공급이 자동으로 되는 것은 아닙니다.
+
+핵심 조건 정리
+
+핵심은 신청의 출발점이 다르다는 점입니다.
+| 비교 항목 | 기관추천 특별공급 | 일반공급 |
+| --- | --- | --- |
+| 시작 조건 | 추천기관 대상 여부가 우선 | 청약통장, 지역, 순위가 우선 |
+| 소득기준 | 적용되는 경우가 많아 먼저 확인 필요 | 보통 직접 핵심은 아니지만 공급유형별 예외 있음 |
+
+FAQ
+
+Q1. 노부모를 모시면 자동으로 기관추천 특별공급이 되나요?
+아닙니다.
+
+마무리 결론
+
+최종 판단은 모집공고를 다시 확인하셔야 합니다.
+"""
+
 
 class TestNaverBundlePublish(unittest.TestCase):
     def test_persist_publish_result_marks_history(self) -> None:
@@ -252,6 +275,32 @@ class TestNaverBundlePublish(unittest.TestCase):
         self.assertIn("<hr>", html)
         self.assertNotIn("### Q1.", html)
         self.assertNotIn("<p>Q2. 번호형 질문도 크게 보여야 하나요?</p>", html)
+
+    def test_inline_markdown_table_is_converted_to_table_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, sections = parse_publish_sections(
+                INLINE_TABLE_ARTICLE,
+                title_hint="기관추천 특별공급과 일반공급, 노부모 부양 세대는 무엇이 다를까",
+            )
+            cleaned_sections, table_assets = target._extract_inline_markdown_table_assets(
+                title="기관추천 특별공급과 일반공급 노부모 부양 세대는 무엇이 다를까",
+                sections=sections,
+                output_dir=tmpdir,
+            )
+
+            self.assertEqual(len(table_assets), 1)
+            self.assertTrue(Path(table_assets[0].path).exists())
+            self.assertTrue(any("[[INLINE_TABLE:" in line for section in cleaned_sections for line in section.lines))
+            self.assertFalse(any("| --- |" in line for section in cleaned_sections for line in section.lines))
+
+            markdown = target.build_publish_markdown(
+                title="기관추천 특별공급과 일반공급 노부모 부양 세대는 무엇이 다를까",
+                sections=cleaned_sections,
+                assets=table_assets,
+            )
+            self.assertIn("[[IMAGE:1]]", markdown)
+            self.assertNotIn("| 비교 항목 |", markdown)
+            self.assertNotIn("| --- |", markdown)
 
     def test_build_gpt_publish_image_plans_ranking_matches_expected_slots(self) -> None:
         _, sections = parse_publish_sections(SAMPLE_ARTICLE, title_hint="1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까")

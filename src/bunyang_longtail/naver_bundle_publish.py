@@ -1476,6 +1476,117 @@ def render_publish_assets(*, title: str, sections: list[PublishSection], output_
     return assets
 
 
+INLINE_TABLE_MARKER_RE = re.compile(r"\[\[INLINE_TABLE:([A-Za-z0-9_-]+)\]\]")
+
+
+def _split_markdown_table_cells(line: str) -> list[str]:
+    text = str(line or "").strip()
+    if text.count("|") < 2:
+        return []
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    cells = [cell.strip() for cell in text.split("|")]
+    return cells if len(cells) >= 2 and all(cell for cell in cells) else []
+
+
+def _is_markdown_table_separator(line: str, column_count: int) -> bool:
+    cells = _split_markdown_table_cells(line)
+    if len(cells) != column_count:
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
+
+
+def _inline_table_marker(table_id: str) -> str:
+    return f"[[INLINE_TABLE:{table_id}]]"
+
+
+def _inline_table_marker_id(line: str) -> str | None:
+    match = INLINE_TABLE_MARKER_RE.fullmatch(str(line or "").strip())
+    return match.group(1) if match else None
+
+
+def _inline_table_asset_slot(table_id: str) -> str:
+    return f"__inline_table__:{table_id}"
+
+
+def _extract_inline_markdown_table_assets(
+    *,
+    title: str,
+    sections: list[PublishSection],
+    output_dir: str | Path,
+) -> tuple[list[PublishSection], list[PublishAsset]]:
+    assets: list[PublishAsset] = []
+    cleaned_sections: list[PublishSection] = []
+    table_seq = 1
+    output_root = Path(output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    for section in sections:
+        cleaned_lines: list[str] = []
+        index = 0
+        while index < len(section.lines):
+            line = section.lines[index].strip()
+            header_cells = _split_markdown_table_cells(line)
+            if index + 1 < len(section.lines) and len(header_cells) >= 2 and _is_markdown_table_separator(section.lines[index + 1], len(header_cells)):
+                rows: list[list[str]] = []
+                row_index = index + 2
+                while row_index < len(section.lines):
+                    row_cells = _split_markdown_table_cells(section.lines[row_index])
+                    if len(row_cells) != len(header_cells):
+                        break
+                    rows.append(row_cells)
+                    row_index += 1
+
+                if rows:
+                    table_id = f"t{table_seq:02d}"
+                    table_seq += 1
+                    table_path = render_table_image(
+                        title=title,
+                        label=f"{section.publish_heading} 표 정리",
+                        headers=header_cells,
+                        rows=rows,
+                        output_path=output_root / f"inline_table_{table_id}.png",
+                    )
+                    assets.append(
+                        PublishAsset(
+                            slot=_inline_table_asset_slot(table_id),
+                            kind="table",
+                            label=f"{section.publish_heading} 표 정리",
+                            path=str(Path(table_path).resolve()),
+                        )
+                    )
+                    cleaned_lines.append(_inline_table_marker(table_id))
+                    index = row_index
+                    continue
+
+            cleaned_lines.append(section.lines[index])
+            index += 1
+
+        cleaned_sections.append(
+            PublishSection(
+                raw_heading=section.raw_heading,
+                publish_heading=section.publish_heading,
+                lines=_normalize_section_lines(cleaned_lines),
+            )
+        )
+
+    return cleaned_sections, assets
+
+
+def _append_section_publish_lines(lines: list[str], section_lines: list[str], inline_table_indexes: dict[str, int]) -> None:
+    for raw_line in section_lines:
+        table_id = _inline_table_marker_id(raw_line)
+        if table_id:
+            image_index = inline_table_indexes.get(table_id)
+            if image_index:
+                lines.append(f"[[IMAGE:{image_index}]]")
+                lines.append("")
+            continue
+        lines.append(raw_line)
+
+
 def _section_lines_for_publish(title: str, section: PublishSection) -> list[str]:
     if _topic_kind(title) == "ranking" and section.raw_heading == "FAQ":
         return [
@@ -1502,7 +1613,7 @@ def _section_lines_for_publish(title: str, section: PublishSection) -> list[str]
             out.append("")
             previous_blank = True
             continue
-        if section.raw_heading in {"이 글에서 바로 답하는 질문", "체크리스트"} and not line.startswith(("- ", "Q")):
+        if section.raw_heading in {"이 글에서 바로 답하는 질문", "체크리스트"} and not line.startswith(("- ", "Q")) and not _inline_table_marker_id(line):
             out.append(f"- {line}")
         else:
             out.append(line)
@@ -1569,8 +1680,11 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
     lines: list[str] = [f"# {title}", ""]
 
     slot_to_indexes: dict[str, list[int]] = {}
+    inline_table_indexes: dict[str, int] = {}
     for index, asset in enumerate(assets, start=1):
         slot_to_indexes.setdefault(asset.slot, []).append(index)
+        if asset.slot.startswith("__inline_table__:"):
+            inline_table_indexes[asset.slot.split(":", 1)[1]] = index
 
     for image_index in slot_to_indexes.get("lead", []):
         lines.append(f"[[IMAGE:{image_index}]]")
@@ -1592,7 +1706,7 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
         for image_index in slot_to_indexes.get(f"{section.publish_heading}::before", []):
             lines.append(f"[[IMAGE:{image_index}]]")
             lines.append("")
-        lines.extend(_section_lines_for_publish(title, section))
+        _append_section_publish_lines(lines, _section_lines_for_publish(title, section), inline_table_indexes)
         lines.append("")
         for image_index in slot_to_indexes.get(f"{section.publish_heading}::after", []):
             lines.append(f"[[IMAGE:{image_index}]]")
@@ -1693,7 +1807,13 @@ def build_publish_bundle(
     publish_title = title_override or build_publish_title(variant_title or original_title)
     output_dir = Path(output_root).resolve()
     images_dir = output_dir / "images"
+    sections, inline_table_assets = _extract_inline_markdown_table_assets(
+        title=publish_title,
+        sections=sections,
+        output_dir=images_dir,
+    )
     assets = render_publish_assets(title=publish_title, sections=sections, output_dir=images_dir, image_provider=image_provider)
+    assets.extend(inline_table_assets)
     min_publish_side_px = int(str(os.getenv("NAVER_BLOG_MIN_IMAGE_SIDE_PX", "800")).strip() or "800")
     assets = [
         PublishAsset(slot=asset.slot, kind=asset.kind, label=asset.label, path=_ensure_publish_asset_min_side(asset.path, min_publish_side_px))
