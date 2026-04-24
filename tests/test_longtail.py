@@ -49,6 +49,7 @@ from bunyang_longtail.workers import (
     queue_text_job,
     run_bundle,
     start_job,
+    _ensure_bundle_in_conn,
 )
 
 
@@ -371,6 +372,32 @@ class LongtailPlannerTest(unittest.TestCase):
 
         blocked_keys = set(list(variant_by_key.keys())[:4])
         self.assertNotIn((row["family"], row["primary_keyword"]), blocked_keys)
+
+    def test_select_publish_candidate_recovers_stale_rendering_image_bundle(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+            self.assertIsNotNone(candidate)
+            bundle = _ensure_bundle_in_conn(conn, variant_id=candidate["id"])
+
+        text_job = queue_text_job(self.db_path, bundle_id=bundle["id"])
+        start_job(self.db_path, text_job["job_id"])
+        complete_text_job(
+            self.db_path,
+            job_id=text_job["job_id"],
+            article_markdown="# 제목\n\n본문",
+        )
+        image_job = queue_image_job(self.db_path, bundle_id=bundle["id"], image_role="thumbnail")
+        start_job(self.db_path, image_job["job_id"])
+
+        with connect(self.db_path) as conn:
+            recovered = _ensure_bundle_in_conn(conn, variant_id=candidate["id"])
+            job = conn.execute("SELECT status, error_code FROM generation_job WHERE id = ?", (image_job["job_id"],)).fetchone()
+
+        self.assertEqual(recovered["bundle_status"], "queued")
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error_code"], "STALE_RUNNING_JOB")
 
     def test_describe_unpublishable_run_result_detects_missing_primary_draft(self) -> None:
         result = {

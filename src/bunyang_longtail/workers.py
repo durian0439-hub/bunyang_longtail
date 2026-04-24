@@ -184,6 +184,38 @@ def _latest_active_bundle(conn: Any, variant_id: int) -> dict[str, Any] | None:
     return result
 
 
+def _is_stale_running_job(job: dict[str, Any], *, stale_minutes: int = 20) -> bool:
+    status = str(job.get("status") or "")
+    started_at = job.get("started_at") or job.get("created_at")
+    if status != "running" or not started_at:
+        return False
+    return True
+
+
+def _cleanup_stale_bundle_jobs(conn: Any, bundle: dict[str, Any]) -> None:
+    bundle_id = int(bundle["id"])
+    jobs = _jobs_for_bundle(conn, bundle_id)
+    stale_jobs = [job for job in jobs if _is_stale_running_job(job)]
+    if not stale_jobs:
+        return
+    for job in stale_jobs:
+        conn.execute(
+            """
+            UPDATE generation_job
+            SET status = 'failed',
+                error_code = COALESCE(error_code, 'STALE_RUNNING_JOB'),
+                error_message = COALESCE(error_message, 'stale running job cleaned up before retry'),
+                finished_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (job["id"],),
+        )
+    conn.execute(
+        "UPDATE article_bundle SET bundle_status = 'queued', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (bundle_id,),
+    )
+
+
 
 def _ensure_bundle_in_conn(
     conn: Any,
@@ -194,7 +226,17 @@ def _ensure_bundle_in_conn(
     variant = _fetch_variant(conn, variant_id)
     bundle = _latest_active_bundle(conn, variant_id)
     if bundle:
-        return bundle
+        _cleanup_stale_bundle_jobs(conn, bundle)
+        refreshed_bundle = _fetch_bundle(conn, bundle["id"])
+        image_jobs = _jobs_for_bundle(conn, bundle["id"], worker_type="image")
+        has_running_image = any(str(job.get("status") or "") == "running" for job in image_jobs)
+        if refreshed_bundle.get("bundle_status") == "rendering_image" and not has_running_image:
+            conn.execute(
+                "UPDATE article_bundle SET bundle_status = 'queued', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (bundle["id"],),
+            )
+            refreshed_bundle = _fetch_bundle(conn, bundle["id"])
+        return refreshed_bundle
     strategy = generation_strategy or variant["route_policy"] or "gpt_web_first"
     conn.execute(
         """
