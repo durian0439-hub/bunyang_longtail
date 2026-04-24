@@ -69,6 +69,51 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
         exclude_sql = f" AND tv.id NOT IN ({placeholders})"
         params.extend(excluded_ids)
 
+    recovery_query = f"""
+        WITH recent_published AS (
+            SELECT
+                ph.variant_id,
+                tc.id AS cluster_id,
+                tc.primary_keyword,
+                ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
+            FROM publish_history ph
+            JOIN topic_variant tv ON tv.id = ph.variant_id
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE ph.channel = 'naver_blog'
+        )
+        SELECT
+            tv.id,
+            tv.title,
+            tv.status,
+            tv.use_count,
+            tc.priority,
+            tc.id AS cluster_id,
+            tc.primary_keyword,
+            ab.id AS bundle_id,
+            1 AS recovery_priority
+        FROM article_bundle ab
+        JOIN topic_variant tv ON tv.id = ab.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE ab.bundle_status = 'queued'
+          AND ab.primary_draft_id IS NOT NULL
+          AND ab.primary_thumbnail_id IS NULL
+          {exclude_sql}
+          AND NOT EXISTS (
+              SELECT 1
+              FROM recent_published rp
+              WHERE rp.rn <= ?
+                AND (
+                    rp.cluster_id = tc.id
+                    OR rp.primary_keyword = tc.primary_keyword
+                )
+          )
+        ORDER BY ab.id ASC
+        LIMIT 1
+    """
+    recovery = fetch_one(conn, recovery_query, tuple([*params, RECENT_PUBLISH_GUARD_COUNT]))
+    if recovery:
+        return dict(recovery)
+
     query = f"""
         WITH recent_published AS (
             SELECT
