@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
@@ -153,11 +153,20 @@ class TestNaverBundlePublish(unittest.TestCase):
         assert spec and spec.loader
         spec.loader.exec_module(module)
 
+        fake_conn = MagicMock()
+        fake_conn.__enter__.return_value = fake_conn
+        fake_conn.__exit__.return_value = False
+        fake_conn.execute.return_value.fetchone.return_value = (999,)
+
         with patch.object(
             module,
             "publish_bundle_to_naver",
             return_value={"status": "ok"},
-        ) as mocked_publish, patch.object(
+        ) as mocked_publish, patch.object(module, "connect", return_value=fake_conn), patch.object(
+            module,
+            "is_recent_publish_conflict",
+            return_value=None,
+        ), patch.object(
             sys,
             "argv",
             [

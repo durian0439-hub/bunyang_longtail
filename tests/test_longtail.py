@@ -306,16 +306,34 @@ class LongtailPlannerTest(unittest.TestCase):
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
-            published = conn.execute(
+            candidates = conn.execute(
                 """
-                SELECT tv.id, tv.angle
+                SELECT tv.id, tv.angle, tc.primary_keyword, tc.family
                 FROM topic_variant tv
                 JOIN topic_cluster tc ON tc.id = tv.cluster_id
-                WHERE tv.status = 'queued' AND tc.family = '일반공급'
+                WHERE tv.status = 'queued'
                 ORDER BY tv.id ASC
-                LIMIT 1
                 """,
-            ).fetchone()
+            ).fetchall()
+            published = None
+            for row in candidates:
+                sibling = conn.execute(
+                    """
+                    SELECT tv.id
+                    FROM topic_variant tv
+                    JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                    WHERE tv.status = 'queued'
+                      AND tv.id <> ?
+                      AND tv.angle = ?
+                      AND tc.primary_keyword <> ?
+                    LIMIT 1
+                    """,
+                    (row["id"], row["angle"], row["primary_keyword"]),
+                ).fetchone()
+                if sibling is not None:
+                    published = row
+                    break
+            self.assertIsNotNone(published)
 
         mark_published(self.db_path, published["id"], "https://blog.naver.com/example/angle-reuse")
 
@@ -332,7 +350,7 @@ class LongtailPlannerTest(unittest.TestCase):
                 (candidate["id"],),
             ).fetchone()
 
-        self.assertEqual(selected["angle"], published["angle"])
+        self.assertNotEqual(selected["primary_keyword"], published["primary_keyword"])
 
     def test_is_recent_publish_conflict_detects_recent_cluster_or_keyword(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
