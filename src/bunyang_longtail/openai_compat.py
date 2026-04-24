@@ -250,13 +250,18 @@ def execute_image_job(
         image_role=image_role,
     )
     (artifact_dir / "request_prompt.txt").write_text(final_prompt, encoding="utf-8")
+    payload: dict[str, Any] = {
+        "model": resolved_model,
+        "prompt": final_prompt,
+        "size": "1024x1024",
+    }
+    image_quality = str(os.getenv("OPENAI_COMPAT_IMAGE_QUALITY") or os.getenv("LONGTAIL_OPENAI_IMAGE_QUALITY") or "").strip()
+    if image_quality:
+        payload["quality"] = image_quality
+
     response = _post_json(
         url=f"{resolved_base_url}/images/generations",
-        payload={
-            "model": resolved_model,
-            "prompt": final_prompt,
-            "size": "1024x1024",
-        },
+        payload=payload,
         api_key=resolved_api_key,
         timeout_seconds=timeout_seconds,
         artifact_dir=artifact_dir,

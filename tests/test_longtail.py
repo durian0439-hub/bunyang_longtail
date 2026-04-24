@@ -40,6 +40,7 @@ from bunyang_longtail.gpt_web import (
     _looks_like_generated_image_src,
     _resolve_google_login_credentials,
     _wait_for_image_response,
+    build_image_prompt,
     build_text_prompt,
 )
 from bunyang_longtail.local_image_fallback import _summary_points, _summary_source, render_fallback_thumbnail
@@ -914,6 +915,17 @@ class LongtailPlannerTest(unittest.TestCase):
             creds = _resolve_google_login_credentials()
         self.assertEqual(creds["email"], "bear0439@gmail.com")
         self.assertEqual(creds["password"], "secret-pass")
+
+    def test_build_image_prompt_includes_fast_instruction_when_enabled(self) -> None:
+        with patch.dict(os.environ, {"LONGTAIL_GPT_IMAGE_SPEED": "fast"}):
+            prompt = build_image_prompt(
+                prompt_text="깔끔한 청약 설명 이미지",
+                title="청약 테스트",
+                excerpt="요약",
+                image_role="thumbnail",
+            )
+        self.assertIn("속도 우선 조건", prompt)
+        self.assertIn("Fast/빠른 생성 모드", prompt)
 
     def test_looks_like_complete_article_detects_long_blog_shape(self) -> None:
         text = "\n".join(

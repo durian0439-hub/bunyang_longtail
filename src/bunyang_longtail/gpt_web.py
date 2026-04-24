@@ -583,9 +583,20 @@ def build_image_prompt(
         "faq_visual": "FAQ 보조 이미지",
     }.get(image_role, image_role)
     excerpt_text = excerpt or ""
+    speed_mode = str(os.getenv("LONGTAIL_GPT_IMAGE_SPEED") or os.getenv("GPT_WEB_IMAGE_SPEED") or "").strip().lower()
+    speed_lines: list[str] = []
+    if speed_mode in {"fast", "quick", "speed", "low", "draft"}:
+        speed_lines = [
+            "속도 우선 조건:",
+            "- ChatGPT 이미지 생성 옵션에서 Fast/빠른 생성 모드가 가능하면 반드시 사용",
+            "- 최고 디테일보다 빠른 완성을 우선하고, 배경과 구도를 단순하게 유지",
+            "- 복잡한 질감, 과도한 장식, 세밀한 오브젝트를 줄여 생성 시간을 단축",
+            "",
+        ]
     return "\n".join(
         [
             f"{role_hint} 이미지를 생성해 주세요.",
+            *speed_lines,
             f"제목: {title}",
             f"요약: {excerpt_text}",
             f"추가 지시: {prompt_text}",
