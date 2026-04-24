@@ -33,6 +33,9 @@ BANNED_STYLE_PATTERNS = (
     r"이 전략이 맞습니다",
     r"청약 판단을 빨리 끝내려면",
     r"결론은 단순합니다",
+    r"정리하면 조건부로 가능합니다",
+    r"끝까지 설명할 수 있는지가",
+    r"편이 더 유리합니다",
 )
 
 MAX_STYLE_REWRITE_ATTEMPTS = 2
@@ -116,6 +119,11 @@ def _validate_house_style(article_markdown: str) -> None:
                 "도입부가 조언체로만 흘러서 답이 늦습니다.",
                 code="CODEX_CLI_STYLE_GUARD_FAILED",
             )
+        if intro.count('- ') >= 3:
+            raise CodexCLIExecutionError(
+                "도입부가 질문 불릿 나열 위주라서 블로그 초입 흐름이 약합니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
 
 
 
@@ -131,7 +139,9 @@ def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, 
             "- FAQ 답변을 '그렇습니다.' 같은 한 단어 단정형으로 시작하지 않습니다.",
             "- 도입부 첫 2문단은 260자 안쪽으로 짧게 쓰고, 바로 상황과 결론을 말합니다.",
             "- 도입부 첫 2문단에서는 '보셔야 합니다', '확인해야 합니다' 같은 조언체 반복을 쓰지 않습니다.",
+            "- 도입부 첫 2문단에서 질문 불릿을 3개 이상 나열하지 않습니다. 먼저 설명형 문단으로 흐름을 만듭니다.",
             "- 같은 상황 표현을 도입부에서 두 번 반복하지 않습니다. 예: '당첨 직후', '무주택 실수요자'.",
+            "- '정리하면 조건부로 가능합니다', '끝까지 설명할 수 있는지가', '편이 더 유리합니다' 같은 메타 문장은 쓰지 않습니다.",
             "- 마지막 행동 가이드는 '이 전략' 표현 대신 어떤 독자에게 더 적합한지 담백하게 씁니다.",
             "- 출력은 수정된 전체 마크다운 본문만 내보냅니다.",
             f"현재 교정 시도: {attempt_no}",

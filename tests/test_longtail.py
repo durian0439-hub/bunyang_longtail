@@ -573,6 +573,12 @@ class LongtailPlannerTest(unittest.TestCase):
             _validate_house_style(weak_intro)
         self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
 
+    def test_validate_house_style_rejects_meta_intro_and_bullet_stack(self) -> None:
+        bad_intro = "# 제목\n\n규제지역이라고 해서 처음부터 막히는 것은 아닙니다. 편이 더 유리합니다.\n\n- 규제지역에서 가능한가\n- 재당첨 제한은 어떤가\n- 기존 집은 언제 파는가\n\n정리하면 조건부로 가능합니다."
+        with self.assertRaises(CodexCLIExecutionError) as exc_info:
+            _validate_house_style(bad_intro)
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
     def test_build_prompt_package_includes_house_style_guards(self) -> None:
         cluster = {
             "outline_json": json.dumps({"sections": []}, ensure_ascii=False),
