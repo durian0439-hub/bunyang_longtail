@@ -25,7 +25,32 @@ fi
   echo "[$(date '+%F %T')] start: longtail publish prod"
 
   cd "$DEV_ROOT"
-  git pull --rebase origin main
+
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$current_branch" != "main" ]]; then
+    echo "error: longtail cron must run on main branch, current=$current_branch"
+    exit 1
+  fi
+
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "error: longtail cron requires a clean working tree before sync"
+    git status --short
+    exit 1
+  fi
+
+  git fetch origin main
+  local_rev="$(git rev-parse HEAD)"
+  remote_rev="$(git rev-parse origin/main)"
+  base_rev="$(git merge-base HEAD origin/main)"
+  if [[ "$local_rev" == "$remote_rev" ]]; then
+    echo "git status: main already synced with origin/main"
+  elif [[ "$local_rev" == "$base_rev" ]]; then
+    git merge --ff-only origin/main
+  else
+    echo "error: local main is ahead of or diverged from origin/main; push/merge before cron execution"
+    echo "local=$local_rev remote=$remote_rev base=$base_rev"
+    exit 1
+  fi
 
   /usr/bin/python3 -m unittest tests.test_naver_bundle_publish tests.test_longtail
 
@@ -39,7 +64,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, 'src')
-from bunyang_longtail.cron_publish import describe_unpublishable_run_result, select_publish_candidate
+from bunyang_longtail.cron_publish import describe_unpublishable_run_result, run_bundle_target_from_candidate, select_publish_candidate
 from bunyang_longtail.database import connect
 from bunyang_longtail.workers import run_bundle
 
@@ -67,9 +92,10 @@ for attempt in range(1, MAX_VARIANT_ATTEMPTS + 1):
         'title': row['title'],
     }, ensure_ascii=False))
 
+    run_target = run_bundle_target_from_candidate(row)
     run_result = run_bundle(
         DB_PATH,
-        variant_id=variant_id,
+        **run_target,
         executor_mode='codex_cli',
         text_route='codex_cli',
         image_roles=None,

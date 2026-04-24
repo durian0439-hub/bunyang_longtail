@@ -6,7 +6,45 @@ from typing import Any
 
 from .database import fetch_all, fetch_one
 
+
+def cleanup_stale_queued_bundles(conn: Any) -> int:
+    rows = fetch_all(
+        conn,
+        """
+        SELECT ab.id
+        FROM article_bundle ab
+        JOIN topic_variant tv ON tv.id = ab.variant_id
+        WHERE ab.bundle_status = 'queued'
+          AND tv.status = 'published'
+        """,
+    )
+    bundle_ids = [int(row["id"]) for row in rows]
+    for bundle_id in bundle_ids:
+        conn.execute(
+            "UPDATE article_bundle SET bundle_status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (bundle_id,),
+        )
+    return len(bundle_ids)
+
 RECENT_PUBLISH_GUARD_COUNT = 4
+
+
+def run_bundle_target_from_candidate(candidate_row: Mapping[str, Any]) -> dict[str, int]:
+    """Return the safest run_bundle target for a selected cron candidate.
+
+    Recovery candidates already have an article_bundle row with a valid draft.
+    Passing variant_id would create a new text job and skip the intended resume path,
+    so bundle_id must win when it is available.
+    """
+    row = dict(candidate_row or {})
+    bundle_id = row.get("bundle_id")
+    if bundle_id is not None:
+        return {"bundle_id": int(bundle_id)}
+
+    variant_id = row.get("id") or row.get("variant_id")
+    if variant_id is None:
+        raise ValueError("cron candidate must include id/variant_id or bundle_id")
+    return {"variant_id": int(variant_id)}
 
 
 def is_recent_publish_conflict(
@@ -61,6 +99,7 @@ def is_recent_publish_conflict(
 
 
 def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int] | None = None) -> Any:
+    cleanup_stale_queued_bundles(conn)
     excluded_ids = sorted({int(variant_id) for variant_id in (excluded_variant_ids or [])})
     exclude_sql = ""
     params: list[Any] = []

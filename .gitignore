@@ -17,3 +17,4 @@ htmlcov/
 .playwright/
 data/
 !data/.gitkeep
+debug/

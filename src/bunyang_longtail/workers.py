@@ -813,7 +813,10 @@ def run_bundle(
         and existing_bundle.get("primary_draft_id")
         and markdown_file is None
         and not simulate
-        and text_route in {"reuse_existing", "reuse_or_codex_cli"}
+        and (
+            bundle_id is not None
+            or text_route in {"reuse_existing", "reuse_or_codex_cli"}
+        )
     )
 
     if reuse_existing_draft:

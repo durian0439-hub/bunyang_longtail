@@ -26,6 +26,7 @@ from bunyang_longtail.config import OPENAI_COMPAT_IMAGE_MODEL, OPENAI_COMPAT_TEX
 from bunyang_longtail.cron_publish import (
     describe_unpublishable_run_result,
     is_recent_publish_conflict,
+    run_bundle_target_from_candidate,
     select_publish_candidate,
 )
 from bunyang_longtail.prompt_builder import build_prompt_package
@@ -768,7 +769,7 @@ class LongtailPlannerTest(unittest.TestCase):
             "bunyang_longtail.codex_cli._run_codex_exec",
             side_effect=[
                 "# 테스트 제목\n\n이 전략이 맞습니다.",
-                "# 테스트 제목\n\n이 경우에는 계약금 시점을 먼저 계산해 두는 편이 현실적입니다.",
+                "# 테스트 제목\n\n계약금이 빠듯한 30대 맞벌이라면 잔금 준비가 흔들리지 않게 납부 시점을 미리 나눠 두는 쪽이 안전합니다.",
             ],
         ):
             result = execute_text_job_codex_cli(
@@ -1026,7 +1027,67 @@ class LongtailPlannerTest(unittest.TestCase):
         fail_job(self.db_path, job_id=image_job["id"], error_code="TEST_IMAGE_FAIL", error_message="boom")
         with connect(self.db_path) as conn:
             refreshed = conn.execute("SELECT bundle_status FROM article_bundle WHERE id = ?", (bundle["id"],)).fetchone()
+            last_text_job_id = conn.execute(
+                "SELECT id FROM generation_job WHERE bundle_id = ? AND worker_type = 'text' ORDER BY id DESC LIMIT 1",
+                (bundle["id"],),
+            ).fetchone()[0]
         self.assertEqual(refreshed["bundle_status"], "queued")
+
+        rerun = run_bundle(self.db_path, bundle_id=bundle["id"], executor_mode="mock")
+        self.assertIn(rerun["mode"], {"mock_complete", "already_complete"})
+        with connect(self.db_path) as conn:
+            rerun_bundle = conn.execute(
+                "SELECT bundle_status, primary_thumbnail_id FROM article_bundle WHERE id = ?",
+                (bundle["id"],),
+            ).fetchone()
+            rerun_text_job_id = conn.execute(
+                "SELECT id FROM generation_job WHERE bundle_id = ? AND worker_type = 'text' ORDER BY id DESC LIMIT 1",
+                (bundle["id"],),
+            ).fetchone()[0]
+        self.assertEqual(rerun_text_job_id, last_text_job_id)
+        self.assertIn(rerun_bundle["bundle_status"], {"queued", "bundled"})
+        if rerun_bundle["bundle_status"] == "bundled":
+            self.assertIsNotNone(rerun_bundle["primary_thumbnail_id"])
+
+
+
+    def test_run_bundle_target_from_candidate_prefers_recovery_bundle_id(self) -> None:
+        self.assertEqual(
+            run_bundle_target_from_candidate({"id": 10, "bundle_id": 55}),
+            {"bundle_id": 55},
+        )
+        self.assertEqual(
+            run_bundle_target_from_candidate({"id": 10}),
+            {"variant_id": 10},
+        )
+        self.assertEqual(
+            run_bundle_target_from_candidate({"variant_id": 11}),
+            {"variant_id": 11},
+        )
+
+    def test_select_publish_candidate_cleans_up_published_variant_queued_bundles(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        with connect(self.db_path) as conn:
+            variant_id = conn.execute(
+                "SELECT id FROM topic_variant WHERE status = 'queued' ORDER BY id ASC LIMIT 1"
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO article_bundle (variant_id, bundle_status, primary_draft_id, selected_image_ids_json, generation_strategy) VALUES (?, 'queued', 999, '[]', 'gpt_web_first')",
+                (variant_id,),
+            )
+            bundle_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "UPDATE topic_variant SET status = 'published' WHERE id = ?",
+                (variant_id,),
+            )
+            conn.execute(
+                "INSERT INTO publish_history (variant_id, draft_id, channel, published_title) VALUES (?, 999, 'naver_blog', 'cleanup')",
+                (variant_id,),
+            )
+            candidate = select_publish_candidate(conn)
+            cleaned = conn.execute("SELECT bundle_status FROM article_bundle WHERE id = ?", (bundle_id,)).fetchone()
+        self.assertEqual(cleaned['bundle_status'], 'failed')
+        self.assertIsNotNone(candidate)
 
 if __name__ == "__main__":
     unittest.main()

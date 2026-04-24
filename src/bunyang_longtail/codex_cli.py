@@ -33,6 +33,32 @@ BANNED_STYLE_PATTERNS = (
     r"이 전략이 맞습니다",
     r"청약 판단을 빨리 끝내려면",
     r"결론은 단순합니다",
+    r"먼저 보셔야 합니다",
+    r"먼저 확인해야 합니다",
+    r"쉽게 말하면",
+    r"작동 방식",
+    r"판단 기준",
+    r"적용 기준",
+    r"유지 전략",
+    r"가능 여부 기준",
+    r"결과는 ",
+    r"다음 행동은 ",
+    r"무게가 실립니다",
+    r"성격이 강해",
+    r"쪽으로 갈 수 있습니다",
+    r"조건:",
+    r"결과:",
+    r"다음 행동:",
+    r"입장권에 가깝습니다",
+    r"현실적입니다",
+    r"현실에 가깝습니다",
+    r"보는 편이 좋습니다",
+    r"같이 봐야 합니다",
+    r"먼저 비교해보는 편이 좋습니다",
+    r"큰 역할을 합니다",
+    r"유리하게 작용",
+    r"자연스럽습니다",
+    r"구조는 아닙니다",
     r"정리하면 조건부로 가능합니다",
     r"끝까지 설명할 수 있는지가",
     r"편이 더 유리합니다",
@@ -121,6 +147,48 @@ def _validate_house_style(article_markdown: str) -> None:
                 )
 
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", article_markdown) if part.strip()]
+    plain_lines = [line.strip() for line in article_markdown.splitlines() if line.strip() and not line.strip().startswith('#')]
+    if plain_lines:
+        first_line = plain_lines[0]
+        if re.match(r"^(청약|부동산|내 집 마련|주택 청약|판단|결론)", first_line) and ("입니다" in first_line or "해야" in first_line):
+            raise CodexCLIExecutionError(
+                "첫 문장이 일반론/설명문으로 시작합니다. 검색자 상황과 결론부터 바로 말해야 합니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+        if "보셔야 합니다" in first_line or "확인해야 합니다" in first_line:
+            raise CodexCLIExecutionError(
+                "첫 문장이 훈수형 안내체로 시작합니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+        if ("통장만 있고" in first_line or "청약통장만 있고" in first_line) and not any(token in first_line for token in ["불리", "손해", "밀리", "늦", "끊기", "잃"]):
+            raise CodexCLIExecutionError(
+                "첫 문장이 상황 설명만 있고 손해/결과가 바로 안 나옵니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+
+    body_for_style = "\n".join(
+        line.strip()
+        for line in article_markdown.splitlines()
+        if line.strip()
+        and not line.strip().startswith('#')
+        and line.strip() not in {"상단 요약", "이 글에서 바로 답하는 질문", "핵심 조건 정리", "헷갈리기 쉬운 예외", "실전 예시 시나리오", "체크리스트", "FAQ", "마무리 결론"}
+    )
+    abstract_terms = ("판단", "작동", "구조", "유지", "적용", "흐름", "가능 여부")
+    abstract_noun_hits = []
+    for term in abstract_terms:
+        abstract_noun_hits.extend(re.findall(term, body_for_style))
+    if len(abstract_noun_hits) >= 10:
+        raise CodexCLIExecutionError(
+            "추상 명사체가 과도하게 반복됩니다. 사람 말투로 다시 풀어 써야 합니다.",
+            code="CODEX_CLI_STYLE_GUARD_FAILED",
+        )
+
+    repetitive_answer_tone_hits = re.findall(r"(먼저 .*봅니다|먼저 .*확인합니다|함께 .*봅니다|중요합니다\.|현실적입니다\.|필요합니다\.|좋습니다\.)", article_markdown)
+    if len(repetitive_answer_tone_hits) >= 8:
+        raise CodexCLIExecutionError(
+            "답안형 설명 문장이 과도하게 반복됩니다. 블로그 말투로 다시 풀어 써야 합니다.",
+            code="CODEX_CLI_STYLE_GUARD_FAILED",
+        )
     body_paragraphs = [p for p in paragraphs if not p.startswith('#') and p not in {"상단 요약", "이 글에서 바로 답하는 질문"}]
     intro = " ".join(body_paragraphs[:2])
     if intro:
@@ -173,6 +241,8 @@ def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, 
             "- '안전합니다' 종결은 최대 1회만 허용하고, 반복되면 다른 자연스러운 표현으로 바꿉니다.",
             "- FAQ 답변을 '그렇습니다.' 같은 한 단어 단정형으로 시작하지 않습니다.",
             "- 도입부 첫 2문단은 260자 안쪽으로 짧게 쓰고, 바로 상황과 결론을 말합니다.",
+            "- 첫 문장은 반드시 검색자의 상황과 손해/불리/밀림/기회 상실 같은 결과를 함께 넣습니다. 예: '~라면 해지는 불리합니다', '~라면 순위가 밀릴 수 있습니다'.",
+            "- 첫 문장은 일반 정의나 설명으로 열지 않습니다. '청약통장은', '통장만 있어도', '청약은'처럼 제도 설명으로 시작하지 않습니다.",
             "- 도입부 첫 2문단에서는 '보셔야 합니다', '확인해야 합니다' 같은 조언체 반복을 쓰지 않습니다.",
             "- 도입부 첫 2문단에서 질문 불릿을 3개 이상 나열하지 않습니다. 먼저 설명형 문단으로 흐름을 만듭니다.",
             "- 같은 상황 표현을 도입부에서 두 번 반복하지 않습니다. 예: '당첨 직후', '무주택 실수요자'.",
@@ -180,6 +250,8 @@ def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, 
             "- '일시적 2주택 관리 싸움', '출구 규정', '일정 규정', '다음 선택지 규정'처럼 억지로 개념화한 표현을 쓰지 않습니다.",
             "- 말줄임표(...)를 쓰지 않습니다.",
             "- '중요합니다', '필요합니다', '가능합니다'처럼 끝내지 말고 왜 중요한지, 무엇이 필요한지, 어떤 조건에서 가능한지까지 문장 안에서 끝까지 설명합니다.",
+            "- '결과는', '다음 행동은', '무게가 실립니다', '성격이 강해', '~쪽으로 갈 수 있습니다', '입장권에 가깝습니다', '현실적입니다', '현실에 가깝습니다', '보는 편이 좋습니다', '같이 봐야 합니다' 같은 답안지체 연결문은 쓰지 않습니다.",
+            "- 실제 블로그 문장처럼 '막상 넣어보면', '여기서 많이 틀립니다', '당첨보다 그다음이 더 어렵습니다', '생각보다 여기서 막히는 경우가 많습니다', '정작 문제는', '많이들 여기서 틀어집니다' 같은 생활형 설명 문장을 우선합니다.",
             "- 마지막 행동 가이드는 '이 전략' 표현 대신 어떤 독자에게 더 적합한지 담백하게 씁니다.",
             "- 출력은 수정된 전체 마크다운 본문만 내보냅니다.",
             f"현재 교정 시도: {attempt_no}",
