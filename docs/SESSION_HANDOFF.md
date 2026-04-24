@@ -29,7 +29,7 @@
   - `scripts/gpt_web_session_daemon.py`: 세션 감시 데몬, 15초 주기 자동 복구
   - `scripts/run_bundle_cdp.sh`: 세션 자동 기동 후 `run-bundle` 실행 래퍼
   - 기본 전용 세션 값: display `:100`, port `9333`, profile `data/gpt_profiles/gpt_terminal_profile_dev`
-  - user systemd 서비스 설치/활성화 완료: `bunyang-gpt-web-session.service`
+  - 참고: `bunyang-gpt-web-session.service` 는 이후 레거시 상주형으로 분류됐고, 현재 기본 운용은 `run_bundle_cdp.sh` 온디맨드 시작/종료다.
 
 ## 현재까지 확인된 사실
 ### 1) ChatGPT 웹 세션

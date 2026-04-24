@@ -90,23 +90,23 @@ python3 run.py probe-gpt-web --headed --profile gpt_image_profile_dev
 xvfb-run -a python3 run.py probe-gpt-web --headed --profile gpt_text_profile_dev
 ```
 
-- 매번 사용자가 브라우저를 직접 열지 않게 하려면, 전용 세션 관리 스크립트로 `Xvfb + Chrome + CDP` 세션을 계속 유지할 수 있습니다. 이 경로는 기존 `gpt_text_profile_dev`와 충돌하지 않도록 기본적으로 `gpt_terminal_profile_dev`를 사용합니다.
+- 매번 사용자가 브라우저를 직접 열지 않게 하려면, 전용 세션 관리 스크립트로 `Xvfb + Chrome + CDP` 세션을 **필요할 때만** 올렸다가 작업 종료 시 내리는 방식을 기본값으로 사용합니다. 기존 `gpt_text_profile_dev`와 충돌하지 않도록 기본적으로 `gpt_terminal_profile_dev`를 사용합니다.
 
 ```bash
 python3 scripts/gpt_web_session.py start
 python3 scripts/gpt_web_session.py status
 python3 scripts/gpt_web_session.py stop
-systemctl --user enable --now bunyang-gpt-web-session.service
-systemctl --user status bunyang-gpt-web-session.service --no-pager
 ./scripts/run_bundle_cdp.sh --db data/cdp_probe5.sqlite3 run-bundle --bundle-id 1 --image-role thumbnail
 ```
 
+- `run_bundle_cdp.sh` 는 시작 시 세션을 올리고, 종료 시 기본으로 세션을 자동 정리합니다.
 - `run_bundle_cdp.sh` 는 `run-bundle` 호출 시 기본으로 아래 값을 자동 보강합니다.
   - `--image-fallback local_canvas`
   - `--wait-for-ready-seconds 60`
   - `--response-timeout-seconds 600`
 - 필요하면 명시 인자로 덮어쓸 수 있습니다.
-- `bunyang-gpt-web-session.service` 는 재부팅 후 자동 시작되며, Chrome/Xvfb가 죽으면 감시 데몬이 자동 복구합니다.
+- 장시간 디버깅이 꼭 필요할 때만 `GPT_WEB_KEEP_SESSION=1 ./scripts/run_bundle_cdp.sh ...` 로 세션 유지가 가능합니다.
+- `bunyang-gpt-web-session.service` 는 기본 경로가 아니라 레거시 상주형 옵션입니다.
 - 자세한 운영 방식은 `docs/TERMINAL_WEB_SESSION.md` 를 참고합니다.
 - Cloudflare 검증이 남아 있으면 `probe-gpt-web` 은 아래 코드로 실패합니다.
   - `GPT_WEB_CHALLENGE`

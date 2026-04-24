@@ -1,6 +1,6 @@
 # 터미널 전용 GPT 웹 세션 운용
 
-목표: API 없이 `Xvfb + Chrome + CDP` 조합으로 ChatGPT 웹 세션을 서버에서 계속 유지하고, `run-bundle`이 그 세션에 붙어 작업하도록 한다.
+목표: API 없이 `Xvfb + Chrome + CDP` 조합으로 ChatGPT 웹 세션을 **필요한 동안만** 유지하고, `run-bundle` 종료 시 세션까지 함께 정리되도록 한다.
 
 ## 1. 세션 시작
 ```bash
@@ -22,7 +22,6 @@ python3 scripts/gpt_web_session.py start
 ## 2. 상태 확인
 ```bash
 python3 scripts/gpt_web_session.py status
-systemctl --user status bunyang-gpt-web-session.service --no-pager
 ```
 
 확인 항목:
@@ -30,17 +29,15 @@ systemctl --user status bunyang-gpt-web-session.service --no-pager
 - Chrome PID 생존 여부
 - CDP 준비 여부
 - 현재 열린 탭 title/url
-- systemd 감시 데몬 활성 여부
 
 ## 3. 세션 중지 / 재시작
 ```bash
 python3 scripts/gpt_web_session.py stop
 python3 scripts/gpt_web_session.py restart
-systemctl --user restart bunyang-gpt-web-session.service
 ```
 
 ## 4. run-bundle 바로 실행
-아래 래퍼는 세션을 먼저 올리고 같은 프로필로 `run-bundle`을 실행한다.
+아래 래퍼는 세션을 먼저 올리고 같은 프로필로 `run-bundle`을 실행한 뒤, 기본적으로 세션까지 자동 종료한다.
 
 ```bash
 ./scripts/run_bundle_cdp.sh --db data/cdp_probe5.sqlite3 run-bundle --bundle-id 1 --image-role thumbnail --wait-for-ready-seconds 20 --response-timeout-seconds 600
@@ -52,40 +49,39 @@ systemctl --user restart bunyang-gpt-web-session.service
 - `--text-profile <same profile>`
 - `--image-profile <same profile>`
 
-## 5. 부팅 자동 시작
-아래 user service를 설치하고 활성화해 두었습니다.
+기본 동작:
+- 시작 시 세션 자동 기동
+- 종료 시 세션 자동 정리
+- 장시간 디버깅이 꼭 필요할 때만 `GPT_WEB_KEEP_SESSION=1` 로 유지 가능
+
+## 5. 레거시 상주 서비스
+아래 user service는 과거 상주형 운용을 위해 만들었던 레거시 옵션입니다.
 - 서비스 파일: `~/.config/systemd/user/bunyang-gpt-web-session.service`
 - 서비스명: `bunyang-gpt-web-session.service`
 
-주요 동작:
-- 부팅 후 자동 시작
-- 세션 상태 15초 주기 점검
-- Chrome/Xvfb 비정상 종료 시 자동 재기동
-
-확인 명령:
-```bash
-systemctl --user status bunyang-gpt-web-session.service --no-pager
-journalctl --user -u bunyang-gpt-web-session.service -n 50 --no-pager
-```
+현재 권장 경로는 아닙니다.
+- 기본값은 `run_bundle_cdp.sh` 온디맨드 실행
+- 상주 서비스는 메모리/브라우저 잔여세션 관점에서 비권장
+- 필요 시에만 수동으로 켜고, 끝나면 반드시 내립니다.
 
 ## 6. 중요한 운영 원칙
-- 브라우저 프로세스를 계속 살려두면 사용자가 매번 직접 창을 열 필요는 없다.
-- 다만 아래 경우에는 로그인/검증이 다시 필요할 수 있다.
+- 기본 원칙은 작업 시작 시 세션 기동, 작업 종료 시 세션 정리입니다.
+- 브라우저를 오래 살려두면 편할 수 있지만, 메모리와 Chrome 잔여세션 누적 위험이 커집니다.
+- 아래 경우에는 로그인/검증이 다시 필요할 수 있습니다.
   - Chrome 프로세스를 종료한 경우
   - 서버 재부팅 후 세션이 초기화된 경우
   - ChatGPT 로그인 세션이 만료된 경우
   - Cloudflare 검증이 다시 뜬 경우
-- 따라서 가장 실용적인 방식은 아래 둘 중 하나다.
-  1. `gpt_web_session.py start`로 전용 세션을 장시간 유지
-  2. 필요 시 `restart` 후 같은 프로필로 재사용
+- 따라서 가장 실용적인 방식은 아래 둘입니다.
+  1. 기본은 `run_bundle_cdp.sh` 온디맨드 실행
+  2. 꼭 필요할 때만 `GPT_WEB_KEEP_SESSION=1` 로 잠시 유지 후 수동 정리
 
 ## 7. 현재 bunyang_longtail 권장 실행 흐름
 ```bash
 cd /home/kj/app/bunyang_longtail/dev
-python3 scripts/gpt_web_session.py start
-python3 run.py --db data/cdp_probe5.sqlite3 run-bundle --bundle-id 1 --executor playwright --cdp-url http://127.0.0.1:9333 --text-profile data/gpt_profiles/gpt_terminal_profile_dev --image-profile data/gpt_profiles/gpt_terminal_profile_dev --image-role thumbnail --wait-for-ready-seconds 20 --response-timeout-seconds 600
+./scripts/run_bundle_cdp.sh --db data/cdp_probe5.sqlite3 run-bundle --bundle-id 1 --image-role thumbnail --wait-for-ready-seconds 20 --response-timeout-seconds 600
 ```
 
 ## 8. 현재 한계
 - 새로 띄운 프로필에서 Cloudflare challenge가 다시 걸리면 완전 무인화는 보장되지 않는다.
-- 하지만 브라우저 세션을 계속 살아 있게 유지하면, 매번 사용자가 직접 브라우저를 열 필요는 없어진다.
+- 따라서 상주형 유지보다, 필요한 때만 올리고 끝나면 내리는 쪽이 현재 운영 원칙에 더 맞다.
