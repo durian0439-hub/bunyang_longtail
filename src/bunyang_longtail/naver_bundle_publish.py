@@ -488,7 +488,7 @@ def _intro_text(sections: list[PublishSection]) -> str:
     if not sections:
         return "오늘은 분양청약 판단이 헷갈릴 때 어떻게 순서를 잡아야 하는지 빠르게 정리해보겠습니다."
     source = _summary_source(sections[0].publish_heading, "", article_markdown="\n".join(sections[0].lines))
-    text = _trim_text(source, max_len=120)
+    text = _clean(source).replace("...", "").replace("…", "")
     if text:
         return text
     return "오늘은 분양청약 판단이 헷갈릴 때 어떻게 순서를 잡아야 하는지 빠르게 정리해보겠습니다."

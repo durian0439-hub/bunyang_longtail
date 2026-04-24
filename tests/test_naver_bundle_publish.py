@@ -237,6 +237,30 @@ class TestNaverBundlePublish(unittest.TestCase):
             self.assertIn("30대 맞벌이 청약은 막연히 불리한 게임이 아니라, 어떤 공급에서 판단하느냐에 따라 결과가 크게 갈립니다.", bundle.markdown)
             self.assertIn("## 청약 1순위 FAQ", bundle.markdown)
 
+    def test_build_publish_markdown_does_not_truncate_intro_with_ellipsis(self) -> None:
+        article = """가점제 규제지역 청약 전 1주택 갈아타기 준비자가 놓치면 탈락하는 포인트
+상단 요약
+
+1주택 갈아타기 준비자도 규제지역 청약이 아예 불가한 것은 아니지만, 가점제에서는 대체로 불리하고 추첨제에서 가능 여부를 따져보는 쪽이 현실적입니다. 문제는 신청보다 당첨 뒤입니다. 기존 주택 처분 조건, 세대 기준, 자금 일정을 하나라도 놓치면 부적격과 계약 포기가 생길 수 있습니다.
+
+FAQ
+
+Q1. 바로 신청해도 되나요?
+아닙니다. 공고문과 처분 조건을 먼저 확인해야 합니다.
+"""
+        _, sections = parse_publish_sections(
+            article,
+            title_hint="가점제 규제지역 청약 전 1주택 갈아타기 준비자가 놓치면 탈락하는 포인트",
+        )
+        markdown = target.build_publish_markdown(
+            title="가점제 규제지역 청약 전 1주택 갈아타기 준비자가 놓치면 탈락하는 포인트",
+            sections=sections,
+            assets=[],
+        )
+
+        self.assertNotIn("...", markdown)
+        self.assertIn("기존 주택 처분 조건, 세대 기준, 자금 일정을 하나라도 놓치면", markdown)
+
     def test_build_publish_bundle_falls_back_to_local_when_gpt_image_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(
             target,
