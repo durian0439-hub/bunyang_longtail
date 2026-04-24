@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -1401,29 +1403,32 @@ def _render_gpt_publish_assets(
             assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=str(Path(execution["file_path"]).resolve())))
         return assets
 
-    from .gpt_web import GptWebExecutionError, execute_image_job as execute_gpt_web_image_job
-
     for index, plan in enumerate(plans, start=1):
         output_path = output_root / f"{index:02d}_{plan.kind}.png"
+        cmd = [
+            sys.executable,
+            str(ROOT / "scripts" / "generate_publish_image.py"),
+            "--job-id", str(job_seed + index),
+            "--profile-name", PUBLISH_GPT_IMAGE_PROFILE,
+            "--prompt-text", plan.prompt_text,
+            "--title", title,
+            "--excerpt", excerpt,
+            "--image-role", plan.image_role,
+            "--output-path", str(output_path),
+            "--artifact-root", str(Path("/home/kj/app/bunyang_longtail/dev/data/gpt_web_artifacts") / "naver_publish"),
+        ]
+        timeout_seconds = 420
         try:
-            execution = execute_gpt_web_image_job(
-                job_id=job_seed + index,
-                profile_name=PUBLISH_GPT_IMAGE_PROFILE,
-                prompt_text=plan.prompt_text,
-                title=title,
-                excerpt=excerpt,
-                image_role=plan.image_role,
-                output_path=output_path,
-                headed=True,
-                wait_for_ready_seconds=180,
-                response_timeout_seconds=600,
-                artifact_root=Path("/home/kj/app/bunyang_longtail/dev/data/gpt_web_artifacts") / "naver_publish",
-            )
-        except GptWebExecutionError as exc:
-            detail = str(exc)
-            if exc.artifact_dir:
-                detail += f" (artifact: {exc.artifact_dir})"
-            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, {detail}") from exc
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, timeout={timeout_seconds}s") from exc
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, {detail}")
+        try:
+            execution = json.loads(proc.stdout)
+        except Exception as exc:
+            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, invalid json response") from exc
         resolved_path = str(Path(execution["file_path"]).resolve())
         if _is_visually_blank_publish_image(resolved_path):
             raise RuntimeError(
