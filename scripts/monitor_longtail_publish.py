@@ -11,7 +11,7 @@ from pathlib import Path
 LOG_PATH = Path("/home/kj/app/bunyang_longtail/prod/logs/longtail_publish.log")
 STATE_PATH = Path("/home/kj/app/bunyang_longtail/prod/run/longtail_monitor_state.json")
 DB_PATH = Path("/home/kj/app/bunyang_longtail/dev/data/cdp_probe5.sqlite3")
-CRON_CMD = "/home/kj/ops/system_cron_longtail_publish_prod.sh"
+RUN_CMD = "/home/kj/app/bunyang_longtail/dev/scripts/run_longtail_publish_prod.sh"
 TARGET = "8272573727"
 
 
@@ -79,7 +79,7 @@ def send_telegram(message: str) -> None:
 
 
 def run_retry() -> tuple[int, str]:
-    proc = subprocess.run(CRON_CMD, shell=True, capture_output=True, text=True)
+    proc = subprocess.run(RUN_CMD, shell=True, capture_output=True, text=True)
     output = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
     return proc.returncode, output[-4000:]
 
@@ -95,7 +95,8 @@ def main() -> int:
     result = evaluate()
     message = f"[longtail-monitor] status={result.status} | {result.detail}"
 
-    if result.should_retry and args.retry_on_failure:
+    retried_at = state.get("last_retry_message")
+    if result.should_retry and args.retry_on_failure and retried_at != message:
         rc, output = run_retry()
         after_publish_id = latest_publish_id()
         retried_result = evaluate()
@@ -106,14 +107,15 @@ def main() -> int:
         )
         if output.strip():
             message += f"\n출력 요약:\n{output}"
+        state["last_retry_message"] = message
 
     if args.notify:
         last_sent = state.get("last_message")
         if last_sent != message:
             send_telegram(message)
             state["last_message"] = message
-            save_state(state)
 
+    save_state(state)
     print(message)
     return 0
 
