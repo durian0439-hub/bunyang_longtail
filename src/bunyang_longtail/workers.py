@@ -185,11 +185,26 @@ def _latest_active_bundle(conn: Any, variant_id: int) -> dict[str, Any] | None:
 
 
 def _is_stale_running_job(job: dict[str, Any], *, stale_minutes: int = 20) -> bool:
+    from datetime import datetime, timedelta
+
     status = str(job.get("status") or "")
     started_at = job.get("started_at") or job.get("created_at")
     if status != "running" or not started_at:
         return False
-    return True
+    raw_started = str(started_at).strip()
+    candidates = [raw_started]
+    if ' ' in raw_started and 'T' not in raw_started:
+        candidates.append(raw_started.replace(' ', 'T'))
+    for candidate in candidates:
+        try:
+            started = datetime.fromisoformat(candidate.replace('Z', '+00:00'))
+            break
+        except ValueError:
+            started = None
+    if started is None:
+        return False
+    now = datetime.now(started.tzinfo) if started.tzinfo else datetime.now()
+    return now - started >= timedelta(minutes=stale_minutes)
 
 
 def _cleanup_stale_bundle_jobs(conn: Any, bundle: dict[str, Any]) -> None:
@@ -1144,7 +1159,7 @@ def fail_job(db_path: str | Path, *, job_id: int, error_code: str, error_message
                 )
         elif job["bundle_id"]:
             conn.execute(
-                "UPDATE article_bundle SET bundle_status = 'rendering_image', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE article_bundle SET bundle_status = 'queued', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (job["bundle_id"],),
             )
 

@@ -1007,5 +1007,26 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("prompt_json", payload)
 
 
+
+
+    def test_fail_image_job_requeues_bundle(self) -> None:
+        from bunyang_longtail.workers import create_bundle, fail_job, run_bundle
+
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        with connect(self.db_path) as conn:
+            variant_id = conn.execute("SELECT id FROM topic_variant WHERE status = 'queued' ORDER BY id ASC LIMIT 1").fetchone()[0]
+        bundle = create_bundle(self.db_path, variant_id=variant_id)
+        run_bundle(self.db_path, bundle_id=bundle["id"], executor_mode="mock")
+        with connect(self.db_path) as conn:
+            image_job = conn.execute(
+                "SELECT id FROM generation_job WHERE bundle_id = ? AND worker_type = 'image' ORDER BY id DESC LIMIT 1",
+                (bundle["id"],),
+            ).fetchone()
+        self.assertIsNotNone(image_job)
+        fail_job(self.db_path, job_id=image_job["id"], error_code="TEST_IMAGE_FAIL", error_message="boom")
+        with connect(self.db_path) as conn:
+            refreshed = conn.execute("SELECT bundle_status FROM article_bundle WHERE id = ?", (bundle["id"],)).fetchone()
+        self.assertEqual(refreshed["bundle_status"], "queued")
+
 if __name__ == "__main__":
     unittest.main()
