@@ -36,6 +36,7 @@ BANNED_STYLE_PATTERNS = (
     r"정리하면 조건부로 가능합니다",
     r"끝까지 설명할 수 있는지가",
     r"편이 더 유리합니다",
+    r"\.\.\.",
 )
 
 MAX_STYLE_REWRITE_ATTEMPTS = 2
@@ -100,6 +101,21 @@ def _validate_house_style(article_markdown: str) -> None:
             code="CODEX_CLI_STYLE_GUARD_FAILED",
         )
 
+    if re.search(r"\.{3,}", article_markdown):
+        raise CodexCLIExecutionError(
+            "말줄임표를 쓰지 않습니다.",
+            code="CODEX_CLI_STYLE_GUARD_FAILED",
+        )
+
+    if re.search(r"(중요합니다\.|필요합니다\.|가능합니다\.|불리합니다\.)", article_markdown):
+        short_lines = [line.strip() for line in article_markdown.splitlines() if line.strip()]
+        for line in short_lines:
+            if len(line) <= 18 and re.search(r"(중요합니다|필요합니다|가능합니다|불리합니다)\.$", line):
+                raise CodexCLIExecutionError(
+                    "의미가 생략된 짧은 단정형 문장이 있습니다.",
+                    code="CODEX_CLI_STYLE_GUARD_FAILED",
+                )
+
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", article_markdown) if part.strip()]
     body_paragraphs = [p for p in paragraphs if not p.startswith('#') and p not in {"상단 요약", "이 글에서 바로 답하는 질문"}]
     intro = " ".join(body_paragraphs[:2])
@@ -125,6 +141,21 @@ def _validate_house_style(article_markdown: str) -> None:
                 code="CODEX_CLI_STYLE_GUARD_FAILED",
             )
 
+    short_lines = [line.strip() for line in article_markdown.splitlines() if line.strip()]
+    for line in short_lines:
+        if line.startswith('#'):
+            continue
+        if len(line) <= 18 and re.search(r"(중요합니다|필요합니다|가능합니다|불리합니다)\.$", line):
+            raise CodexCLIExecutionError(
+                "의미가 생략된 짧은 단정형 문장이 있습니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+        if re.search(r"(정리하면|결론만 말하면|쉽게 말해)\s*$", line):
+            raise CodexCLIExecutionError(
+                "문장을 열어놓고 핵심 설명을 생략하는 표현이 있습니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+
 
 
 def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, attempt_no: int) -> str:
@@ -142,6 +173,8 @@ def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, 
             "- 도입부 첫 2문단에서 질문 불릿을 3개 이상 나열하지 않습니다. 먼저 설명형 문단으로 흐름을 만듭니다.",
             "- 같은 상황 표현을 도입부에서 두 번 반복하지 않습니다. 예: '당첨 직후', '무주택 실수요자'.",
             "- '정리하면 조건부로 가능합니다', '끝까지 설명할 수 있는지가', '편이 더 유리합니다' 같은 메타 문장은 쓰지 않습니다.",
+            "- 말줄임표(...)를 쓰지 않습니다.",
+            "- '중요합니다', '필요합니다', '가능합니다'처럼 끝내지 말고 왜 중요한지, 무엇이 필요한지, 어떤 조건에서 가능한지까지 문장 안에서 끝까지 설명합니다.",
             "- 마지막 행동 가이드는 '이 전략' 표현 대신 어떤 독자에게 더 적합한지 담백하게 씁니다.",
             "- 출력은 수정된 전체 마크다운 본문만 내보냅니다.",
             f"현재 교정 시도: {attempt_no}",

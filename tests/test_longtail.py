@@ -579,6 +579,18 @@ class LongtailPlannerTest(unittest.TestCase):
             _validate_house_style(bad_intro)
         self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
 
+    def test_validate_house_style_rejects_ellipsis_and_truncated_claim(self) -> None:
+        bad_body = "# 제목\n\n기존 집 처분 계획은 중요합니다.\n\n당첨 이후 자금 흐름이 흔들릴 수 있습니다..."
+        with self.assertRaises(CodexCLIExecutionError) as exc_info:
+            _validate_house_style(bad_body)
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
+    def test_validate_house_style_rejects_global_truncated_phrase(self) -> None:
+        bad_body = "# 제목\n\n핵심 조건 정리\n\n정리하면\n\n재당첨 제한을 먼저 확인해야 합니다."
+        with self.assertRaises(CodexCLIExecutionError) as exc_info:
+            _validate_house_style(bad_body)
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
     def test_build_prompt_package_includes_house_style_guards(self) -> None:
         cluster = {
             "outline_json": json.dumps({"sections": []}, ensure_ascii=False),
