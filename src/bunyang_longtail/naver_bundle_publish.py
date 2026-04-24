@@ -12,6 +12,8 @@ from statistics import mean
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[2]
+
 from .local_image_fallback import _pick_font_path, _summary_source
 
 try:

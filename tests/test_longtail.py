@@ -591,6 +591,12 @@ class LongtailPlannerTest(unittest.TestCase):
             _validate_house_style(bad_body)
         self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
 
+    def test_validate_house_style_rejects_artificial_concept_phrase(self) -> None:
+        bad_body = "# 제목\n\n1주택 갈아타기는 결국 일시적 2주택 관리 싸움입니다."
+        with self.assertRaises(CodexCLIExecutionError) as exc_info:
+            _validate_house_style(bad_body)
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
     def test_build_prompt_package_includes_house_style_guards(self) -> None:
         cluster = {
             "outline_json": json.dumps({"sections": []}, ensure_ascii=False),
