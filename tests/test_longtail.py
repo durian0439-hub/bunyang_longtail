@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import sqlite3
 import sys
 import tempfile
@@ -22,7 +23,11 @@ from bunyang_longtail.codex_cli import (
     execute_text_job as execute_text_job_codex_cli,
 )
 from bunyang_longtail.config import OPENAI_COMPAT_IMAGE_MODEL, OPENAI_COMPAT_TEXT_MODEL
-from bunyang_longtail.cron_publish import describe_unpublishable_run_result, select_publish_candidate
+from bunyang_longtail.cron_publish import (
+    describe_unpublishable_run_result,
+    is_recent_publish_conflict,
+    select_publish_candidate,
+)
 from bunyang_longtail.prompt_builder import build_prompt_package
 from bunyang_longtail.database import connect, init_db, migrate_db
 from bunyang_longtail.gpt_web import (
@@ -97,7 +102,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(len(titles), len(set(titles)))
 
     def test_prompt_contains_required_sections(self) -> None:
-        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
         rows = list_variants(self.db_path, status="queued", limit=1)
         prompt = get_prompt(self.db_path, variant_id=rows[0]["id"])
         self.assertIsNotNone(prompt)
@@ -256,7 +261,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(attempt_no, 2)
 
     def test_select_publish_candidate_skips_excluded_variant_ids(self) -> None:
-        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
         with connect(self.db_path) as conn:
             first = select_publish_candidate(conn)
             self.assertIsNotNone(first)
@@ -265,7 +270,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertNotEqual(first["id"], second["id"])
 
     def test_select_publish_candidate_skips_recent_cluster_and_keyword(self) -> None:
-        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
             published = conn.execute(
@@ -298,7 +303,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertNotEqual(selected["primary_keyword"], published["primary_keyword"])
 
     def test_select_publish_candidate_allows_angle_reuse_when_other_guards_do_not_match(self) -> None:
-        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
             published = conn.execute(
@@ -329,8 +334,92 @@ class LongtailPlannerTest(unittest.TestCase):
 
         self.assertEqual(selected["angle"], published["angle"])
 
+    def test_is_recent_publish_conflict_detects_recent_cluster_or_keyword(self) -> None:
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
+
+        with connect(self.db_path) as conn:
+            pair = conn.execute(
+                """
+                SELECT a.id AS first_id, b.id AS second_id
+                FROM topic_variant a
+                JOIN topic_variant b ON b.cluster_id = a.cluster_id AND b.id <> a.id
+                ORDER BY a.cluster_id ASC, a.id ASC, b.id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            self.assertIsNotNone(pair)
+            conn.execute(
+                """
+                INSERT INTO article_draft (variant_id, title, article_markdown, prompt_version, status)
+                VALUES (?, 'recent draft', 'body', 'v1', 'drafted')
+                """,
+                (pair['first_id'],),
+            )
+            draft_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                """
+                INSERT INTO publish_history (
+                    bundle_id, variant_id, draft_id, channel, target_account, publish_mode, published_title, naver_url, published_at, result_json
+                ) VALUES (?, ?, ?, 'naver_blog', 'default', 'publish', 'recent post', 'https://example.com/dup-check', CURRENT_TIMESTAMP, '{}')
+                """,
+                (None, pair['first_id'], draft_id),
+            )
+            conflict = is_recent_publish_conflict(conn, variant_id=pair['second_id'])
+
+        self.assertIsNotNone(conflict)
+        self.assertIn(conflict['conflict_reason'], {'cluster', 'primary_keyword'})
+
+    def test_select_publish_candidate_weighted_random_falls_back_to_drafted_when_queued_conflicts(self) -> None:
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
+
+        with connect(self.db_path) as conn:
+            queued = conn.execute(
+                """
+                SELECT tv.id, tc.primary_keyword
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tv.status = 'queued'
+                ORDER BY tv.id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            self.assertIsNotNone(queued)
+            conn.execute(
+                "UPDATE topic_variant SET status = 'drafted' WHERE status = 'queued' AND id <> ?",
+                (queued['id'],),
+            )
+            conn.execute(
+                """
+                INSERT INTO article_draft (variant_id, title, article_markdown, prompt_version, status)
+                SELECT id, title, 'body', 'v1', 'drafted'
+                FROM topic_variant
+                WHERE status = 'drafted'
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO article_draft (variant_id, title, article_markdown, prompt_version, status)
+                VALUES (?, 'recent draft', 'body', 'v1', 'drafted')
+                """,
+                (queued['id'],),
+            )
+            draft_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                """
+                INSERT INTO publish_history (
+                    bundle_id, variant_id, draft_id, channel, target_account, publish_mode, published_title, naver_url, published_at, result_json
+                ) VALUES (?, ?, ?, 'naver_blog', 'default', 'publish', 'recent queued conflict', 'https://example.com/conflict', CURRENT_TIMESTAMP, '{}')
+                """,
+                (None, queued['id'], draft_id),
+            )
+            random.seed(7)
+            selected = select_publish_candidate(conn)
+
+        self.assertIsNotNone(selected)
+        self.assertNotEqual(selected['id'], queued['id'])
+
     def test_select_publish_candidate_returns_none_when_recent_guard_blocks_all_candidates(self) -> None:
-        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
             variants = conn.execute(
@@ -372,7 +461,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertNotIn((row["family"], row["primary_keyword"]), blocked_keys)
 
     def test_select_publish_candidate_recovers_stale_rendering_image_bundle(self) -> None:
-        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
             candidate = select_publish_candidate(conn)

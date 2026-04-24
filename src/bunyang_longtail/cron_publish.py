@@ -1,11 +1,63 @@
 from __future__ import annotations
 
+import random
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from .database import fetch_one
+from .database import fetch_all, fetch_one
 
 RECENT_PUBLISH_GUARD_COUNT = 4
+
+
+def is_recent_publish_conflict(
+    conn: Any,
+    *,
+    variant_id: int,
+    guard_count: int = RECENT_PUBLISH_GUARD_COUNT,
+) -> dict[str, Any] | None:
+    query = """
+        WITH candidate AS (
+            SELECT tv.id AS variant_id, tc.id AS cluster_id, tc.primary_keyword
+            FROM topic_variant tv
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE tv.id = ?
+        ),
+        recent_published AS (
+            SELECT
+                ph.id AS publish_id,
+                ph.variant_id,
+                ph.published_title,
+                ph.published_at,
+                tc.id AS cluster_id,
+                tc.primary_keyword,
+                ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
+            FROM publish_history ph
+            JOIN topic_variant tv ON tv.id = ph.variant_id
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE ph.channel = 'naver_blog'
+        )
+        SELECT
+            rp.publish_id,
+            rp.variant_id,
+            rp.published_title,
+            rp.published_at,
+            CASE
+                WHEN rp.cluster_id = c.cluster_id THEN 'cluster'
+                WHEN rp.primary_keyword = c.primary_keyword THEN 'primary_keyword'
+                ELSE 'unknown'
+            END AS conflict_reason
+        FROM candidate c
+        JOIN recent_published rp
+          ON rp.rn <= ?
+         AND (
+              rp.cluster_id = c.cluster_id
+              OR rp.primary_keyword = c.primary_keyword
+         )
+        ORDER BY rp.publish_id DESC
+        LIMIT 1
+    """
+    row = fetch_one(conn, query, (variant_id, guard_count))
+    return dict(row) if row else None
 
 
 def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int] | None = None) -> Any:
@@ -22,19 +74,24 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             SELECT
                 ph.variant_id,
                 tc.id AS cluster_id,
-                tc.family,
                 tc.primary_keyword,
-                tv.angle,
                 ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
             FROM publish_history ph
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
         )
-        SELECT tv.id, tv.title
+        SELECT
+            tv.id,
+            tv.title,
+            tv.status,
+            tv.use_count,
+            tc.priority,
+            tc.id AS cluster_id,
+            tc.primary_keyword
         FROM topic_variant tv
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
-        WHERE tv.status = 'queued'
+        WHERE tv.status IN ('queued', 'drafted')
           {exclude_sql}
           AND NOT EXISTS (
               SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
@@ -48,10 +105,23 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
                     OR rp.primary_keyword = tc.primary_keyword
                 )
           )
-        ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC
-        LIMIT 1
     """
-    return fetch_one(conn, query, tuple([*params, RECENT_PUBLISH_GUARD_COUNT]))
+    rows = [dict(row) for row in fetch_all(conn, query, tuple([*params, RECENT_PUBLISH_GUARD_COUNT]))]
+    if not rows:
+        return None
+
+    weighted_rows: list[dict[str, Any]] = []
+    weights: list[float] = []
+    for row in rows:
+        priority = max(int(row.get('priority') or 0), 0)
+        use_count = max(int(row.get('use_count') or 0), 0)
+        status = str(row.get('status') or '')
+        status_bonus = 1.25 if status == 'queued' else 1.0
+        weight = (priority + 1) * status_bonus / (use_count + 1)
+        weighted_rows.append(row)
+        weights.append(weight)
+
+    return random.choices(weighted_rows, weights=weights, k=1)[0]
 
 
 def describe_unpublishable_run_result(run_result: Mapping[str, Any]) -> dict[str, Any] | None:

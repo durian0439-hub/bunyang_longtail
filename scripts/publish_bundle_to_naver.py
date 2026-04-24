@@ -12,6 +12,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from bunyang_longtail.cron_publish import is_recent_publish_conflict
+from bunyang_longtail.database import connect
 from bunyang_longtail.naver_bundle_publish import publish_bundle_to_naver
 
 
@@ -26,6 +28,21 @@ def main() -> int:
     parser.add_argument("--category-no")
     parser.add_argument("--category-name")
     args = parser.parse_args()
+
+    with connect(args.db) as conn:
+        row = conn.execute("SELECT variant_id FROM article_bundle WHERE id = ?", (args.bundle_id,)).fetchone()
+        if row is None:
+            raise SystemExit(f"bundle_id={args.bundle_id} 를 찾지 못했습니다.")
+        conflict = is_recent_publish_conflict(conn, variant_id=int(row[0]))
+        if conflict is not None:
+            print(json.dumps({
+                "status": "blocked",
+                "reason": "recent_publish_conflict",
+                "bundle_id": args.bundle_id,
+                "variant_id": int(row[0]),
+                "conflict": conflict,
+            }, ensure_ascii=False, indent=2))
+            return 1
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_root = args.output_root or f"data/naver_publish/bundle_{args.bundle_id}_{timestamp}"

@@ -258,13 +258,80 @@ def replenish_queue(db_path: str | Path, min_queued: int = 500, variants_per_clu
     init_db(db_path)
     created_clusters = 0
     created_variants = 0
+    cluster_candidates = iter_cluster_candidates()
+    target_cluster_count = len(cluster_candidates)
+    max_new_clusters_per_run = max(min_queued, 64)
 
     with connect(db_path) as conn:
         queued_count = conn.execute("SELECT COUNT(*) FROM topic_variant WHERE status = 'queued'").fetchone()[0]
-        if queued_count >= min_queued:
-            return {"queued": queued_count, "created_clusters": 0, "created_variants": 0}
+        cluster_count = conn.execute("SELECT COUNT(*) FROM topic_cluster").fetchone()[0]
+        if queued_count >= min_queued and cluster_count >= target_cluster_count:
+            return {
+                "queued": queued_count,
+                "created_clusters": 0,
+                "created_variants": 0,
+                "cluster_count": cluster_count,
+                "target_cluster_count": target_cluster_count,
+            }
 
-        for cluster in iter_cluster_candidates():
+        family_counts = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT family, COUNT(*) FROM topic_cluster GROUP BY family").fetchall()
+        }
+        keyword_counts = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT primary_keyword, COUNT(*) FROM topic_cluster GROUP BY primary_keyword").fetchall()
+        }
+        existing_semantic = {
+            row[0] for row in conn.execute("SELECT semantic_key FROM topic_cluster").fetchall()
+        }
+
+        def cluster_sort_key(cluster: dict[str, Any]) -> tuple[int, int, int, str, str]:
+            family_count = int(family_counts.get(cluster['family'], 0))
+            keyword_count = int(keyword_counts.get(cluster['primary_keyword'], 0))
+            return (keyword_count, family_count, -int(cluster['priority']), cluster['family'], cluster['scenario'])
+
+        missing_clusters = [c for c in cluster_candidates if c['semantic_key'] not in existing_semantic]
+        missing_clusters.sort(key=cluster_sort_key)
+
+        selected_clusters: list[dict[str, Any]] = []
+        seen_keywords: set[str] = set()
+        for cluster in missing_clusters:
+            keyword = str(cluster['primary_keyword'])
+            if keyword in seen_keywords:
+                continue
+            selected_clusters.append(cluster)
+            seen_keywords.add(keyword)
+            if len(selected_clusters) >= max_new_clusters_per_run:
+                break
+        if len(selected_clusters) < max_new_clusters_per_run:
+            for cluster in missing_clusters:
+                if cluster in selected_clusters:
+                    continue
+                selected_clusters.append(cluster)
+                if len(selected_clusters) >= max_new_clusters_per_run:
+                    break
+
+        if not selected_clusters and queued_count < min_queued:
+            existing_candidates = [c for c in cluster_candidates if c['semantic_key'] in existing_semantic]
+            existing_candidates.sort(key=cluster_sort_key)
+            for cluster in existing_candidates:
+                keyword = str(cluster['primary_keyword'])
+                if keyword in seen_keywords:
+                    continue
+                selected_clusters.append(cluster)
+                seen_keywords.add(keyword)
+                if len(selected_clusters) >= max_new_clusters_per_run:
+                    break
+            if len(selected_clusters) < max_new_clusters_per_run:
+                for cluster in existing_candidates:
+                    if cluster in selected_clusters:
+                        continue
+                    selected_clusters.append(cluster)
+                    if len(selected_clusters) >= max_new_clusters_per_run:
+                        break
+
+        for cluster in selected_clusters:
             existing_cluster = fetch_one(conn, "SELECT id FROM topic_cluster WHERE semantic_key = ?", (cluster["semantic_key"],))
             if not existing_cluster:
                 conn.execute(
@@ -289,6 +356,8 @@ def replenish_queue(db_path: str | Path, min_queued: int = 500, variants_per_clu
                     ),
                 )
                 created_clusters += 1
+                family_counts[cluster['family']] = int(family_counts.get(cluster['family'], 0)) + 1
+                keyword_counts[cluster['primary_keyword']] = int(keyword_counts.get(cluster['primary_keyword'], 0)) + 1
                 cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             else:
                 cluster_id = existing_cluster["id"]
@@ -302,7 +371,7 @@ def replenish_queue(db_path: str | Path, min_queued: int = 500, variants_per_clu
                 continue
 
             for angle in ANGLE_ORDER:
-                if existing_variants >= variants_per_cluster:
+                if existing_variants >= variants_per_cluster or queued_count >= min_queued:
                     break
                 title = _compose_title(cluster, angle)
                 variant_seed = f"{cluster['semantic_key']}|{angle}|{title}"
@@ -310,10 +379,7 @@ def replenish_queue(db_path: str | Path, min_queued: int = 500, variants_per_clu
                 if fetch_one(conn, "SELECT id FROM topic_variant WHERE variant_key = ?", (variant_key,)):
                     continue
                 title = _ensure_unique_title(conn, title, cluster)
-                variant = {
-                    "angle": angle,
-                    "title": title,
-                }
+                variant = {"angle": angle, "title": title}
                 prompt_payload = build_prompt_package(cluster, variant)
                 slug = _slugify(title, variant_key[:6])
                 seo_score = _estimate_seo_score(title, cluster)
@@ -337,14 +403,16 @@ def replenish_queue(db_path: str | Path, min_queued: int = 500, variants_per_clu
                 created_variants += 1
                 existing_variants += 1
                 queued_count += 1
-                if queued_count >= min_queued:
-                    return {
-                        "queued": queued_count,
-                        "created_clusters": created_clusters,
-                        "created_variants": created_variants,
-                    }
 
-    return {"queued": queued_count, "created_clusters": created_clusters, "created_variants": created_variants}
+        cluster_count = conn.execute("SELECT COUNT(*) FROM topic_cluster").fetchone()[0]
+
+    return {
+        "queued": queued_count,
+        "created_clusters": created_clusters,
+        "created_variants": created_variants,
+        "cluster_count": cluster_count,
+        "target_cluster_count": target_cluster_count,
+    }
 
 
 def list_variants(db_path: str | Path, status: str = "queued", limit: int = 20) -> list[dict[str, Any]]:
