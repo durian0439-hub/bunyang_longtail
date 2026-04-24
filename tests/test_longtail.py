@@ -567,6 +567,12 @@ class LongtailPlannerTest(unittest.TestCase):
             _validate_house_style("# 제목\n\n이 경우 공급유형부터 나눠야 판단이 맞습니다.")
         self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
 
+    def test_validate_house_style_rejects_weak_intro(self) -> None:
+        weak_intro = "# 제목\n\n청약 판단을 빨리 끝내려면 조건을 한 줄씩 분리해서 보셔야 합니다.\n\n당첨 직후 가장 먼저 확인할 결론은 단순합니다. 무주택 실수요자라도 입주자모집공고 기준과 제출 서류가 맞으면 진행할 수 있지만, 기준일과 세대 범위, 주택 수 판단이 어긋나면 당첨 이후에도 계약이 어려워질 수 있습니다."
+        with self.assertRaises(CodexCLIExecutionError) as exc_info:
+            _validate_house_style(weak_intro)
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
     def test_build_prompt_package_includes_house_style_guards(self) -> None:
         cluster = {
             "outline_json": json.dumps({"sections": []}, ensure_ascii=False),
@@ -583,6 +589,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("판단이 맞습니다", rules)
         self.assertIn("안전합니다", rules)
         self.assertIn("그렇습니다.", rules)
+        self.assertIn("도입부 첫 2문단", rules)
         self.assertNotIn("본문 끝에는 누가 이 전략이 맞는지", rules)
 
     def test_build_text_prompt_uses_neutral_action_guide_phrase(self) -> None:

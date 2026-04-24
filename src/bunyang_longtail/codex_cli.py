@@ -31,6 +31,8 @@ BANNED_STYLE_PATTERNS = (
     r"판단이 맞습니다",
     r"보는 게 맞습니다",
     r"이 전략이 맞습니다",
+    r"청약 판단을 빨리 끝내려면",
+    r"결론은 단순합니다",
 )
 
 MAX_STYLE_REWRITE_ATTEMPTS = 2
@@ -83,7 +85,7 @@ def _validate_house_style(article_markdown: str) -> None:
                 code="CODEX_CLI_STYLE_GUARD_FAILED",
             )
 
-    if article_markdown.count("안전합니다") > 2:
+    if article_markdown.count("안전합니다") > 1:
         raise CodexCLIExecutionError(
             "'안전합니다' 표현이 과도하게 반복됐습니다.",
             code="CODEX_CLI_STYLE_GUARD_FAILED",
@@ -95,6 +97,26 @@ def _validate_house_style(article_markdown: str) -> None:
             code="CODEX_CLI_STYLE_GUARD_FAILED",
         )
 
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", article_markdown) if part.strip()]
+    body_paragraphs = [p for p in paragraphs if not p.startswith('#') and p not in {"상단 요약", "이 글에서 바로 답하는 질문"}]
+    intro = " ".join(body_paragraphs[:2])
+    if intro:
+        if intro.count("당첨 직후") > 1:
+            raise CodexCLIExecutionError(
+                "도입부에서 같은 상황 표현이 반복됩니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+        if len(intro) > 260:
+            raise CodexCLIExecutionError(
+                "도입부가 너무 길고 장황합니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+        if "보셔야 합니다" in intro or "확인해야 합니다" in intro:
+            raise CodexCLIExecutionError(
+                "도입부가 조언체로만 흘러서 답이 늦습니다.",
+                code="CODEX_CLI_STYLE_GUARD_FAILED",
+            )
+
 
 
 def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, attempt_no: int) -> str:
@@ -104,9 +126,12 @@ def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, 
             "핵심 정보, 제목, 섹션 구조, 사례, FAQ 개수는 유지하고 말투만 교정해야 합니다.",
             f"이번 교정 사유: {failure_message}",
             "교정 규칙:",
-            "- '판단이 맞습니다', '보는 게 맞습니다', '이 전략이 맞습니다' 같은 상담체 상투 표현을 쓰지 않습니다.",
+            "- '판단이 맞습니다', '보는 게 맞습니다', '이 전략이 맞습니다', '청약 판단을 빨리 끝내려면', '결론은 단순합니다' 같은 상투 표현을 쓰지 않습니다.",
             "- '안전합니다' 종결은 최대 1회만 허용하고, 반복되면 다른 자연스러운 표현으로 바꿉니다.",
             "- FAQ 답변을 '그렇습니다.' 같은 한 단어 단정형으로 시작하지 않습니다.",
+            "- 도입부 첫 2문단은 260자 안쪽으로 짧게 쓰고, 바로 상황과 결론을 말합니다.",
+            "- 도입부 첫 2문단에서는 '보셔야 합니다', '확인해야 합니다' 같은 조언체 반복을 쓰지 않습니다.",
+            "- 같은 상황 표현을 도입부에서 두 번 반복하지 않습니다. 예: '당첨 직후', '무주택 실수요자'.",
             "- 마지막 행동 가이드는 '이 전략' 표현 대신 어떤 독자에게 더 적합한지 담백하게 씁니다.",
             "- 출력은 수정된 전체 마크다운 본문만 내보냅니다.",
             f"현재 교정 시도: {attempt_no}",
