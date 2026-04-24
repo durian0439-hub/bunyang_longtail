@@ -800,6 +800,26 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(summary["drafts"], 1)
         self.assertEqual(summary["image_assets"], 1)
 
+    def test_run_bundle_explicit_empty_image_roles_does_not_queue_image_job(self) -> None:
+        replenish_queue(self.db_path, min_queued=5, variants_per_cluster=1)
+        with connect(self.db_path) as conn:
+            variant_id = conn.execute("SELECT id FROM topic_variant WHERE status = 'queued' ORDER BY id ASC LIMIT 1").fetchone()[0]
+
+        result = run_bundle(self.db_path, variant_id=variant_id, executor_mode="mock", image_roles=[])
+
+        self.assertEqual(result["mode"], "already_complete")
+        with connect(self.db_path) as conn:
+            image_job_count = conn.execute(
+                "SELECT COUNT(*) FROM generation_job WHERE bundle_id = ? AND worker_type = 'image'",
+                (result["bundle"]["id"],),
+            ).fetchone()[0]
+            text_job_count = conn.execute(
+                "SELECT COUNT(*) FROM generation_job WHERE bundle_id = ? AND worker_type = 'text'",
+                (result["bundle"]["id"],),
+            ).fetchone()[0]
+        self.assertEqual(text_job_count, 1)
+        self.assertEqual(image_job_count, 0)
+
     def test_run_bundle_cli_mock_completes_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=5, variants_per_cluster=1)
         exit_code = main(

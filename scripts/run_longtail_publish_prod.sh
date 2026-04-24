@@ -98,7 +98,7 @@ for attempt in range(1, MAX_VARIANT_ATTEMPTS + 1):
         **run_target,
         executor_mode='codex_cli',
         text_route='codex_cli',
-        image_roles=None,
+        image_roles=[],
         simulate=False,
     )
     print(json.dumps(run_result, ensure_ascii=False, indent=2))

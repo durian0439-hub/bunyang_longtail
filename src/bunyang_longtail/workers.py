@@ -777,7 +777,8 @@ def run_bundle(
             image_model_label = OPENAI_COMPAT_IMAGE_MODEL
 
     image_specs = image_specs or {}
-    roles = list(dict.fromkeys((image_roles or []) + list(image_specs.keys()))) or ["thumbnail"]
+    requested_image_roles = ["thumbnail"] if image_roles is None else list(image_roles)
+    roles = list(dict.fromkeys(requested_image_roles + list(image_specs.keys())))
 
     existing_bundle: dict[str, Any] | None = None
     if bundle_id is not None:
