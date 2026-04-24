@@ -264,7 +264,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIsNotNone(second)
         self.assertNotEqual(first["id"], second["id"])
 
-    def test_select_publish_candidate_skips_recent_cluster_family_and_keyword(self) -> None:
+    def test_select_publish_candidate_skips_recent_cluster_and_keyword(self) -> None:
         replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
@@ -295,7 +295,6 @@ class LongtailPlannerTest(unittest.TestCase):
             ).fetchone()
 
         self.assertNotEqual(selected["cluster_id"], published["cluster_id"])
-        self.assertNotEqual(selected["family"], published["family"])
         self.assertNotEqual(selected["primary_keyword"], published["primary_keyword"])
 
     def test_select_publish_candidate_allows_angle_reuse_when_other_guards_do_not_match(self) -> None:
@@ -328,7 +327,6 @@ class LongtailPlannerTest(unittest.TestCase):
                 (candidate["id"],),
             ).fetchone()
 
-        self.assertNotEqual(selected["family"], "일반공급")
         self.assertEqual(selected["angle"], published["angle"])
 
     def test_select_publish_candidate_returns_none_when_recent_guard_blocks_all_candidates(self) -> None:
