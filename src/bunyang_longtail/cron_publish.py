@@ -47,7 +47,6 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
                     rp.cluster_id = tc.id
                     OR rp.primary_keyword = tc.primary_keyword
                     OR rp.family = tc.family
-                    OR rp.angle = tv.angle
                 )
           )
         ORDER BY tc.priority DESC, tv.created_at ASC, tv.id ASC

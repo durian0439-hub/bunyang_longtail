@@ -263,7 +263,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIsNotNone(second)
         self.assertNotEqual(first["id"], second["id"])
 
-    def test_select_publish_candidate_skips_recent_cluster_family_keyword_and_angle(self) -> None:
+    def test_select_publish_candidate_skips_recent_cluster_family_and_keyword(self) -> None:
         replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
@@ -296,7 +296,39 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertNotEqual(selected["cluster_id"], published["cluster_id"])
         self.assertNotEqual(selected["family"], published["family"])
         self.assertNotEqual(selected["primary_keyword"], published["primary_keyword"])
-        self.assertNotEqual(selected["angle"], published["angle"])
+
+    def test_select_publish_candidate_allows_angle_reuse_when_other_guards_do_not_match(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
+
+        with connect(self.db_path) as conn:
+            published = conn.execute(
+                """
+                SELECT tv.id, tv.angle
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tv.status = 'queued' AND tc.family = '일반공급'
+                ORDER BY tv.id ASC
+                LIMIT 1
+                """,
+            ).fetchone()
+
+        mark_published(self.db_path, published["id"], "https://blog.naver.com/example/angle-reuse")
+
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+            self.assertIsNotNone(candidate)
+            selected = conn.execute(
+                """
+                SELECT tc.family, tc.primary_keyword, tv.angle
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tv.id = ?
+                """,
+                (candidate["id"],),
+            ).fetchone()
+
+        self.assertNotEqual(selected["family"], "일반공급")
+        self.assertEqual(selected["angle"], published["angle"])
 
     def test_select_publish_candidate_returns_none_when_recent_guard_blocks_all_candidates(self) -> None:
         replenish_queue(self.db_path, min_queued=10, variants_per_cluster=2)
@@ -304,27 +336,41 @@ class LongtailPlannerTest(unittest.TestCase):
         with connect(self.db_path) as conn:
             variants = conn.execute(
                 """
-                SELECT id, angle
-                FROM topic_variant
-                WHERE status = 'queued' AND angle IN ('판단형', '비교형')
-                ORDER BY id ASC
+                SELECT tv.id, tc.family, tc.primary_keyword
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tv.status = 'queued'
+                  AND tc.family != '대안'
+                ORDER BY tv.id ASC
                 """,
             ).fetchall()
 
-        variant_by_angle = {}
+        variant_by_key = {}
         for row in variants:
-            variant_by_angle.setdefault(row["angle"], row["id"])
+            variant_by_key.setdefault((row["family"], row["primary_keyword"]), row["id"])
 
-        self.assertIn("판단형", variant_by_angle)
-        self.assertIn("비교형", variant_by_angle)
+        self.assertGreaterEqual(len(variant_by_key), 4)
 
-        mark_published(self.db_path, variant_by_angle["판단형"], "https://blog.naver.com/example/recent-guard-1")
-        mark_published(self.db_path, variant_by_angle["비교형"], "https://blog.naver.com/example/recent-guard-2")
+        for idx, variant_id in enumerate(list(variant_by_key.values())[:4], start=1):
+            mark_published(self.db_path, variant_id, f"https://blog.naver.com/example/recent-guard-{idx}")
 
         with connect(self.db_path) as conn:
             candidate = select_publish_candidate(conn)
 
-        self.assertIsNone(candidate)
+        self.assertIsNotNone(candidate)
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT tc.family, tc.primary_keyword
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tv.id = ?
+                """,
+                (candidate["id"],),
+            ).fetchone()
+
+        blocked_keys = set(list(variant_by_key.keys())[:4])
+        self.assertNotIn((row["family"], row["primary_keyword"]), blocked_keys)
 
     def test_describe_unpublishable_run_result_detects_missing_primary_draft(self) -> None:
         result = {
