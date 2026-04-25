@@ -2705,6 +2705,129 @@ def _persist_publish_result(db_path: str | Path, article: dict[str, Any], result
     mark_published(db_path, int(article["variant_id"]), publish_url, published_title=published_title)
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "1" if default else "0")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _longtail_video_python(video_maker_root: Path) -> str:
+    override = _clean(os.getenv("LONGTAIL_VIDEO_MAKER_PYTHON"))
+    if override:
+        return override
+    venv_python = video_maker_root / ".venv" / "bin" / "python"
+    if venv_python.exists():
+        return str(venv_python)
+    return "/usr/bin/python3"
+
+
+def _longtail_blog_category(domain: str | None, fallback: str | None = None) -> str:
+    value = _clean(fallback)
+    if value:
+        return value
+    domain_value = _clean(domain).lower()
+    if domain_value == "auction":
+        return "How To 경매"
+    if domain_value == "tax":
+        return "How To 세금"
+    if domain_value == "loan":
+        return "부동산 대출"
+    return "How To 분양"
+
+
+def _maybe_publish_longtail_video(
+    *,
+    publish_bundle: PublishBundle,
+    publish_result: dict[str, Any],
+    category_name: str | None,
+) -> dict[str, Any]:
+    if not _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False):
+        return {"status": "skipped", "reason": "LONGTAIL_VIDEO_UPLOAD disabled"}
+
+    blog_url = _clean(str(publish_result.get("current_url") or publish_result.get("url") or publish_result.get("naver_url") or ""))
+    if not blog_url:
+        return {"status": "skipped", "reason": "blog_url missing"}
+
+    meta_path = Path(publish_bundle.meta_path).resolve()
+    video_maker_root = Path(os.getenv("LONGTAIL_VIDEO_MAKER_ROOT", "/home/kj/app/video_maker")).resolve()
+    output_dir = meta_path.parent / "video"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    domain = ""
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        domain = _clean(meta.get("domain"))
+    except Exception:
+        domain = ""
+
+    blog_category = _longtail_blog_category(domain, category_name)
+    cmd = [
+        _longtail_video_python(video_maker_root),
+        "-m",
+        "src.cli.publish_project_video",
+        "--project",
+        "longtail",
+        "--source",
+        str(meta_path),
+        "--output-dir",
+        str(output_dir),
+        "--privacy",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_PRIVACY_STATUS")) or "private",
+        "--client-secrets",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_CLIENT_SECRETS")) or "/home/kj/app/openclaw_youtube/client_secrets.json",
+        "--token-file",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_TOKEN_FILE")) or str(video_maker_root / "token.pickle"),
+        "--expected-channel-id",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_EXPECTED_CHANNEL_ID")) or "UCjuIOmk641DSX8u_gkPYeuA",
+        "--blog-url",
+        blog_url,
+        "--blog-home-url",
+        _clean(os.getenv("LONGTAIL_BLOG_HOME_URL")) or "https://blog.naver.com/bear0439",
+        "--blog-category",
+        blog_category,
+        "--clip-topic",
+        blog_category,
+        "--skip-youtube",
+        "--skip-comment",
+    ]
+    if _env_flag("LONGTAIL_VIDEO_TTS_ENABLED", default=True):
+        cmd.append("--with-tts")
+        if _env_flag("LONGTAIL_VIDEO_TTS_STRICT", default=False):
+            cmd.append("--tts-strict")
+    if _env_flag("LONGTAIL_NAVER_CLIP_UPLOAD", default=True):
+        cmd.extend(["--upload-naver-clip", "--naver-clip-visibility", "private"])
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(video_maker_root),
+        env={**os.environ, "PYTHONPATH": "."},
+        capture_output=True,
+        text=True,
+        timeout=int(str(os.getenv("LONGTAIL_VIDEO_TIMEOUT_SEC", "3600")).strip() or "3600"),
+    )
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode != 0:
+        payload = {
+            "status": "error",
+            "returncode": proc.returncode,
+            "stdout_tail": stdout[-4000:],
+            "stderr_tail": stderr[-4000:],
+            "output_dir": str(output_dir),
+        }
+        if _env_flag("LONGTAIL_VIDEO_STRICT", default=False):
+            raise RuntimeError("longtail_video_publish_failed\n" + json.dumps(payload, ensure_ascii=False, indent=2))
+        return payload
+
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        return {"status": "error", "reason": "missing video publish stdout", "output_dir": str(output_dir)}
+    result = json.loads(lines[-1])
+    result["status"] = result.get("status") or "ok"
+    result["output_dir"] = str(output_dir)
+    result["blog_category"] = blog_category
+    return result
+
+
 def _requires_gpt_publish_images(image_provider: str) -> bool:
     return _clean(image_provider).lower() in {"gpt_web", "openai_compat"}
 
@@ -2795,4 +2918,9 @@ def publish_bundle_to_naver(
         "manual_review_required": bool(result.get("manual_review_required")),
     }
     _persist_publish_result(db_path, article, result)
+    result["video_publish"] = _maybe_publish_longtail_video(
+        publish_bundle=publish_bundle,
+        publish_result=result,
+        category_name=category_name,
+    )
     return result

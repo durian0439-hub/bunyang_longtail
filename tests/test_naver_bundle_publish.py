@@ -619,6 +619,109 @@ A. 서류와 현장을 다시 확인해야 합니다.
             else:
                 os.environ["NAVER_BLOG_CATEGORY_NAME"] = previous_name
 
+    def test_publish_bundle_to_naver_can_trigger_longtail_video_publish(self) -> None:
+        fake_src = types.ModuleType("src")
+        fake_publisher = types.ModuleType("src.publisher")
+        fake_naver = types.ModuleType("src.publisher.naver_playwright")
+        seen_cmd: list[str] = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta_path = Path(tmpdir) / "publish_bundle.json"
+            meta_path.write_text(
+                json.dumps({"bundle_id": 11, "domain": "auction", "title": "경매 롱테일", "images": [], "tags": ["경매"]}),
+                encoding="utf-8",
+            )
+
+            def fake_publish(apt_id, title, body_html, images, **kwargs):
+                out_dir = Path(kwargs["out"])
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / f"{apt_id}.json").write_text(
+                    json.dumps({"status": "ok", "current_url": "https://blog.naver.com/bear0439/11"}),
+                    encoding="utf-8",
+                )
+                return True
+
+            def fake_run(cmd, **kwargs):
+                seen_cmd.extend(cmd)
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "status": "ok",
+                            "project": "longtail",
+                            "clip_package_path": "/tmp/longtail.naver_clip.json",
+                            "naver_clip_upload": {"status": "private_saved"},
+                        },
+                        ensure_ascii=False,
+                    ),
+                    stderr="",
+                )
+
+            fake_src.publisher = fake_publisher
+            fake_publisher.naver_playwright = fake_naver
+            fake_naver.publish = fake_publish
+
+            with patch.dict(
+                os.environ,
+                {
+                    "LONGTAIL_VIDEO_UPLOAD": "1",
+                    "LONGTAIL_VIDEO_TTS_ENABLED": "1",
+                    "LONGTAIL_NAVER_CLIP_UPLOAD": "1",
+                    "LONGTAIL_VIDEO_MAKER_ROOT": "/home/kj/app/video_maker",
+                },
+            ), patch.dict(
+                sys.modules,
+                {
+                    "src": fake_src,
+                    "src.publisher": fake_publisher,
+                    "src.publisher.naver_playwright": fake_naver,
+                },
+            ), patch.object(
+                target,
+                "load_bundle_article",
+                return_value={
+                    "title": "경매 체크리스트와 입찰 전 점검, 경매초보는 무엇부터 봐야 할까",
+                    "article_markdown": AUCTION_LONG_ARTICLE,
+                    "related_links": [],
+                    "domain": "auction",
+                    "variant_id": 1,
+                },
+            ), patch.object(
+                target,
+                "build_publish_bundle",
+                return_value=SimpleNamespace(
+                    apt_id="longtail-bundle-11",
+                    title="경매 체크리스트와 입찰 전 점검 경매초보는 무엇부터 봐야 할까",
+                    body_html="<p>본문</p>",
+                    images=[],
+                    markdown="본문",
+                    tags=["경매"],
+                    meta_path=str(meta_path),
+                    image_provider="local",
+                    image_provider_requested="local",
+                    image_provider_fallback_from=None,
+                    image_provider_fallback_reason=None,
+                ),
+            ), patch.object(target, "_persist_publish_result"), patch.object(target.subprocess, "run", side_effect=fake_run):
+                result = target.publish_bundle_to_naver(
+                    db_path="test.sqlite3",
+                    bundle_id=11,
+                    output_root=tmpdir,
+                    mode="private",
+                    category_no="17",
+                    category_name="How To 경매",
+                )
+
+        self.assertEqual(result["video_publish"]["project"], "longtail")
+        self.assertEqual(result["video_publish"]["blog_category"], "How To 경매")
+        self.assertIn("--project", seen_cmd)
+        self.assertIn("longtail", seen_cmd)
+        self.assertIn("--blog-category", seen_cmd)
+        self.assertIn("How To 경매", seen_cmd)
+        self.assertIn("--skip-youtube", seen_cmd)
+        self.assertIn("--with-tts", seen_cmd)
+        self.assertIn("--upload-naver-clip", seen_cmd)
+
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "blank.png"
