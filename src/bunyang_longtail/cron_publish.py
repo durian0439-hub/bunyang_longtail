@@ -123,6 +123,55 @@ def is_recent_publish_conflict(
     row = fetch_one(conn, query, (variant_id, guard_count))
     return dict(row) if row else None
 
+def _published_topic_blocks(conn: Any, *, domain: str) -> dict[str, set[Any]]:
+    rows = fetch_all(
+        conn,
+        """
+        SELECT DISTINCT
+            ph.variant_id,
+            tc.id AS cluster_id,
+            tc.semantic_key,
+            tv.title AS variant_title,
+            tv.slug AS variant_slug
+        FROM publish_history ph
+        JOIN topic_variant tv ON tv.id = ph.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE ph.channel = 'naver_blog'
+          AND tc.domain = ?
+        """,
+        (domain,),
+    )
+    blocks: dict[str, set[Any]] = {
+        "variant_ids": set(),
+        "cluster_ids": set(),
+        "semantic_keys": set(),
+        "titles": set(),
+        "slugs": set(),
+    }
+    for row in rows:
+        if row["variant_id"] is not None:
+            blocks["variant_ids"].add(int(row["variant_id"]))
+        if row["cluster_id"] is not None:
+            blocks["cluster_ids"].add(int(row["cluster_id"]))
+        if row["semantic_key"]:
+            blocks["semantic_keys"].add(str(row["semantic_key"]))
+        if row["variant_title"]:
+            blocks["titles"].add(str(row["variant_title"]))
+        if row["variant_slug"]:
+            blocks["slugs"].add(str(row["variant_slug"]))
+    return blocks
+
+
+def _is_blocked_by_published_topic(row: Mapping[str, Any], blocks: Mapping[str, set[Any]]) -> bool:
+    return (
+        int(row.get("id") or row.get("variant_id") or 0) in blocks.get("variant_ids", set())
+        or int(row.get("cluster_id") or 0) in blocks.get("cluster_ids", set())
+        or str(row.get("semantic_key") or "") in blocks.get("semantic_keys", set())
+        or str(row.get("title") or "") in blocks.get("titles", set())
+        or str(row.get("slug") or "") in blocks.get("slugs", set())
+    )
+
+
 def select_publish_candidate(
     conn: Any,
     *,
@@ -131,52 +180,20 @@ def select_publish_candidate(
 ) -> Any:
     domain = _normalize_domain(domain)
     cleanup_stale_queued_bundles(conn, domain=domain)
-    excluded_ids = sorted({int(variant_id) for variant_id in (excluded_variant_ids or [])})
-    exclude_sql = ""
-    excluded_params: list[Any] = []
-    if excluded_ids:
-        placeholders = ", ".join("?" for _ in excluded_ids)
-        exclude_sql = f" AND tv.id NOT IN ({placeholders})"
-        excluded_params.extend(excluded_ids)
+    excluded_ids = {int(variant_id) for variant_id in (excluded_variant_ids or [])}
+    published_blocks = _published_topic_blocks(conn, domain=domain)
 
-    recovery_query = f"""
-        WITH recent_published AS (
-            SELECT
-                ph.variant_id,
-                tv.title AS variant_title,
-                tv.slug AS variant_slug,
-                tc.id AS cluster_id,
-                tc.domain,
-                tc.semantic_key,
-                tc.primary_keyword,
-                ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
-            FROM publish_history ph
-            JOIN topic_variant tv ON tv.id = ph.variant_id
-            JOIN topic_cluster tc ON tc.id = tv.cluster_id
-            WHERE ph.channel = 'naver_blog'
-              AND tc.domain = ?
-        ),
-        published_topics AS (
-            SELECT DISTINCT
-                tc.id AS cluster_id,
-                tc.domain,
-                tc.semantic_key,
-                tv.title AS variant_title,
-                tv.slug AS variant_slug
-            FROM publish_history ph
-            JOIN topic_variant tv ON tv.id = ph.variant_id
-            JOIN topic_cluster tc ON tc.id = tv.cluster_id
-            WHERE ph.channel = 'naver_blog'
-              AND tc.domain = ?
-        )
+    recovery_query = """
         SELECT
             tv.id,
             tv.title,
+            tv.slug,
             tv.status,
             tv.use_count,
             tc.priority,
             tc.id AS cluster_id,
             tc.domain,
+            tc.semantic_key,
             tc.primary_keyword,
             ab.id AS bundle_id,
             1 AS recovery_priority
@@ -187,102 +204,41 @@ def select_publish_candidate(
           AND ab.bundle_status = 'queued'
           AND ab.primary_draft_id IS NOT NULL
           AND ab.primary_thumbnail_id IS NULL
-          {exclude_sql}
-          AND NOT EXISTS (
-              SELECT 1
-              FROM published_topics pt
-              WHERE pt.cluster_id = tc.id
-                 OR pt.semantic_key = tc.semantic_key
-                 OR pt.variant_title = tv.title
-                 OR pt.variant_slug = tv.slug
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM recent_published rp
-              WHERE rp.rn <= ?
-                AND (
-                    rp.cluster_id = tc.id
-                    OR rp.semantic_key = tc.semantic_key
-                    OR rp.variant_title = tv.title
-                    OR rp.variant_slug = tv.slug
-                )
-          )
         ORDER BY ab.id ASC
-        LIMIT 1
     """
-    recovery_params = tuple([domain, domain, domain, *excluded_params, RECENT_PUBLISH_GUARD_COUNT])
-    recovery = fetch_one(conn, recovery_query, recovery_params)
-    if recovery:
-        return dict(recovery)
+    for recovery in fetch_all(conn, recovery_query, (domain,)):
+        row = dict(recovery)
+        if int(row["id"]) in excluded_ids:
+            continue
+        if _is_blocked_by_published_topic(row, published_blocks):
+            continue
+        return row
 
-    query = f"""
-        WITH recent_published AS (
-            SELECT
-                ph.variant_id,
-                tv.title AS variant_title,
-                tv.slug AS variant_slug,
-                tc.id AS cluster_id,
-                tc.domain,
-                tc.semantic_key,
-                tc.primary_keyword,
-                ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
-            FROM publish_history ph
-            JOIN topic_variant tv ON tv.id = ph.variant_id
-            JOIN topic_cluster tc ON tc.id = tv.cluster_id
-            WHERE ph.channel = 'naver_blog'
-              AND tc.domain = ?
-        ),
-        published_topics AS (
-            SELECT DISTINCT
-                tc.id AS cluster_id,
-                tc.domain,
-                tc.semantic_key,
-                tv.title AS variant_title,
-                tv.slug AS variant_slug
-            FROM publish_history ph
-            JOIN topic_variant tv ON tv.id = ph.variant_id
-            JOIN topic_cluster tc ON tc.id = tv.cluster_id
-            WHERE ph.channel = 'naver_blog'
-              AND tc.domain = ?
-        )
+    query = """
         SELECT
             tv.id,
             tv.title,
+            tv.slug,
             tv.status,
             tv.use_count,
             tc.priority,
             tc.id AS cluster_id,
             tc.domain,
+            tc.semantic_key,
             tc.primary_keyword
         FROM topic_variant tv
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
         WHERE tc.domain = ?
           AND tv.status IN ('queued', 'drafted')
-          {exclude_sql}
-          AND NOT EXISTS (
-              SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM published_topics pt
-              WHERE pt.cluster_id = tc.id
-                 OR pt.semantic_key = tc.semantic_key
-                 OR pt.variant_title = tv.title
-                 OR pt.variant_slug = tv.slug
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM recent_published rp
-              WHERE rp.rn <= ?
-                AND (
-                    rp.cluster_id = tc.id
-                    OR rp.semantic_key = tc.semantic_key
-                    OR rp.variant_title = tv.title
-                    OR rp.variant_slug = tv.slug
-                )
-          )
     """
-    rows = [dict(row) for row in fetch_all(conn, query, tuple([domain, domain, domain, *excluded_params, RECENT_PUBLISH_GUARD_COUNT]))]
+    rows = []
+    for candidate in fetch_all(conn, query, (domain,)):
+        row = dict(candidate)
+        if int(row["id"]) in excluded_ids:
+            continue
+        if _is_blocked_by_published_topic(row, published_blocks):
+            continue
+        rows.append(row)
     if not rows:
         return None
 
