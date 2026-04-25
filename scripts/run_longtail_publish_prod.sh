@@ -6,6 +6,8 @@ export LONGTAIL_NAVER_CATEGORY_NO="${LONGTAIL_NAVER_CATEGORY_NO:-16}"
 export LONGTAIL_NAVER_CATEGORY_NAME="${LONGTAIL_NAVER_CATEGORY_NAME:-How To 분양}"
 export LONGTAIL_AUCTION_NAVER_CATEGORY_NO="${LONGTAIL_AUCTION_NAVER_CATEGORY_NO:-17}"
 export LONGTAIL_AUCTION_NAVER_CATEGORY_NAME="${LONGTAIL_AUCTION_NAVER_CATEGORY_NAME:-How To 경매}"
+export LONGTAIL_TAX_NAVER_CATEGORY_NO="${LONGTAIL_TAX_NAVER_CATEGORY_NO:-}"
+export LONGTAIL_TAX_NAVER_CATEGORY_NAME="${LONGTAIL_TAX_NAVER_CATEGORY_NAME:-How To 세금}"
 export LONGTAIL_GPT_IMAGE_SPEED="${LONGTAIL_GPT_IMAGE_SPEED:-fast}"
 
 DEV_ROOT="/home/kj/app/bunyang_longtail/dev"
@@ -87,6 +89,12 @@ DOMAIN_CONFIGS = [
         'label': '경매 롱테일',
         'category_no': os.environ.get('LONGTAIL_AUCTION_NAVER_CATEGORY_NO', '17').strip(),
         'category_name': os.environ.get('LONGTAIL_AUCTION_NAVER_CATEGORY_NAME', 'How To 경매'),
+    },
+    {
+        'domain': 'tax',
+        'label': '세금 롱테일',
+        'category_no': os.environ.get('LONGTAIL_TAX_NAVER_CATEGORY_NO', '').strip(),
+        'category_name': os.environ.get('LONGTAIL_TAX_NAVER_CATEGORY_NAME', 'How To 세금'),
     },
 ]
 

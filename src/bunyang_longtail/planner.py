@@ -16,6 +16,7 @@ from .catalog import (
     FAMILY_PRESETS,
     NAVER_SEO_SECTIONS,
     SUPPORTED_DOMAINS,
+    TAX_DOMAIN,
     TOPIC_BLUEPRINTS,
 )
 from .database import connect, fetch_all, fetch_one, init_db
@@ -234,6 +235,72 @@ def _build_auction_outline(cluster: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _build_tax_outline(cluster: dict[str, Any]) -> list[dict[str, Any]]:
+    primary = cluster["primary_keyword"]
+    secondary = cluster["secondary_keyword"]
+    audience = cluster["audience"]
+    scenario = cluster["scenario"]
+    comparison = cluster["comparison_keyword"] or secondary
+    return [
+        {
+            "heading": "상단 요약",
+            "points": [
+                f"{audience} 기준 {primary}에서 먼저 확인할 세금 발생 시점",
+                f"{scenario} 계산 전에 봐야 할 주택 수·명의·기한 3가지",
+            ],
+        },
+        {
+            "heading": "이 글에서 바로 답하는 질문",
+            "points": [
+                f"{primary}{_particle(primary, ('이', '가'))} 언제 생기는 세금인지",
+                f"{comparison}{_particle(comparison, ('과', '와'))} 어떤 기준으로 비교해야 하는지",
+            ],
+        },
+        {
+            "heading": "핵심 조건 정리",
+            "points": [
+                f"{primary} 과세 대상과 계산 기준",
+                f"{secondary}{_particle(secondary, ('과', '와'))} 함께 확인할 주택 수·보유기간·명의 기준",
+            ],
+        },
+        {
+            "heading": "헷갈리기 쉬운 예외",
+            "points": [
+                f"{scenario} 자주 놓치는 감면·중과·비과세 예외",
+                "신고기한, 가산세, 공식 계산 기준에서 달라질 수 있는 포인트",
+            ],
+        },
+        {
+            "heading": "실전 예시 시나리오",
+            "points": [
+                f"{audience} 가상 사례 1개",
+                "계산 예시와 최종 확인 순서",
+            ],
+        },
+        {
+            "heading": "체크리스트",
+            "points": [
+                "계약·잔금·매도·신고 전 확인할 항목 5개 이상",
+                "홈택스, 위택스, 지자체 안내, 세무 상담 전 준비 순서",
+            ],
+        },
+        {
+            "heading": "FAQ",
+            "points": [
+                f"{primary} 관련 자주 묻는 질문 6개 이상",
+                "단정 대신 조건과 공식 확인 위치를 짧게 답변",
+            ],
+        },
+        {
+            "heading": "마무리 결론",
+            "points": [
+                f"{audience}에게 맞는 다음 확인 순서 1줄",
+                "세법 적용 시점과 개인 조건은 공식 안내와 전문가 상담으로 재확인하도록 안내",
+            ],
+        },
+    ]
+
+
 def _compose_auction_title(cluster: dict[str, Any], angle: str) -> str:
     primary = cluster["primary_keyword"]
     audience = cluster["audience"]
@@ -274,9 +341,51 @@ def _compose_auction_title(cluster: dict[str, Any], angle: str) -> str:
     return _clean(title)
 
 
+def _compose_tax_title(cluster: dict[str, Any], angle: str) -> str:
+    primary = cluster["primary_keyword"]
+    audience = cluster["audience"]
+    scenario = cluster["scenario"]
+    intent = cluster["search_intent"]
+    comparison = cluster["comparison_keyword"] or cluster["secondary_keyword"]
+    topic_scene = _topic_scene(primary, scenario)
+
+    if angle == "비교형":
+        title = f"{primary}{_particle(primary, ('과', '와'))} {comparison}, 어떤 세금이 더 부담될까"
+    elif angle == "실수방지형":
+        title = f"{topic_scene}, 신고 전에 많이 놓치는 부분"
+    elif angle == "체크리스트형":
+        title = f"{topic_scene}, 신고 전 체크리스트"
+    elif angle == "사례형":
+        title = f"{topic_scene}, 사례로 보는 세금 흐름"
+    elif angle == "FAQ형":
+        title = f"{primary} FAQ, {audience}가 가장 헷갈리는 질문"
+    else:
+        if intent == "계산":
+            title = f"{topic_scene}, 실제 세금 계산 순서"
+        elif intent == "가능여부":
+            title = f"{topic_scene}, 감면이나 비과세 가능할까"
+        elif intent == "비교":
+            title = f"{primary}{_particle(primary, ('과', '와'))} {comparison}, {audience} 기준 차이"
+        elif intent == "실수방지":
+            title = f"{topic_scene}, 세금에서 자주 틀리는 기준"
+        elif intent == "체크리스트":
+            title = f"{topic_scene}, 먼저 확인할 순서"
+        elif intent == "신고방법":
+            title = f"{topic_scene}, 신고 전에 준비할 것"
+        elif intent == "사례":
+            title = f"{topic_scene}, 실제 사례로 보는 기준"
+        elif intent == "FAQ":
+            title = f"{primary} 자주 묻는 질문, 세금 기준 정리"
+        else:
+            title = f"{topic_scene}, {audience}가 먼저 볼 기준"
+    return _clean(title)
+
+
 def _compose_title(cluster: dict[str, Any], angle: str) -> str:
     if cluster.get("domain") == AUCTION_DOMAIN:
         return _compose_auction_title(cluster, angle)
+    if cluster.get("domain") == TAX_DOMAIN:
+        return _compose_tax_title(cluster, angle)
 
     primary = cluster["primary_keyword"]
     audience = cluster["audience"]
@@ -333,6 +442,28 @@ def _ensure_unique_title(conn: Any, title: str, cluster: dict[str, Any]) -> str:
     return _clean(f"{title}, {_hash(cluster['semantic_key'], size=6)}")
 
 
+def _tax_keyword_sources() -> list[str]:
+    return [
+        "google_autocomplete",
+        "naver_autocomplete",
+        "bing_osjson",
+        "daum_suggest",
+        "nts.go.kr",
+        "hometax.go.kr",
+        "wetax.go.kr",
+        "moleg.go.kr",
+        "gov.kr",
+    ]
+
+
+def _domain_keyword_sources(domain: str) -> list[str]:
+    if domain == AUCTION_DOMAIN:
+        return ["google_autocomplete", "naver_autocomplete", "bing_osjson", "daum_suggest", "courtauction.go.kr", "onbid.co.kr"]
+    if domain == TAX_DOMAIN:
+        return _tax_keyword_sources()
+    return []
+
+
 def _estimate_seo_score(title: str, cluster: dict[str, Any]) -> int:
     score = 40
     primary = cluster["primary_keyword"]
@@ -353,6 +484,8 @@ def _estimate_seo_score(title: str, cluster: dict[str, Any]) -> int:
     if 18 <= len(title) <= 42:
         score += 10
     if any(word in title for word in ["정리", "가능할까", "체크리스트", "FAQ", "차이"]):
+        score += 5
+    if cluster.get("domain") == TAX_DOMAIN and any(word in title for word in ["계산", "신고", "감면", "비과세", "세금", "기준"]):
         score += 5
     return min(score, 100)
 
@@ -384,10 +517,15 @@ def iter_cluster_candidates(domain: str = DEFAULT_DOMAIN) -> list[dict[str, Any]
                 "policy_json": json.dumps({
                     "route_policy": "gpt_web_first",
                     "domain": domain,
-                    "keyword_sources": ["google_autocomplete", "naver_autocomplete", "bing_osjson", "daum_suggest", "courtauction.go.kr", "onbid.co.kr"] if domain == AUCTION_DOMAIN else [],
+                    "keyword_sources": _domain_keyword_sources(domain),
                 }, ensure_ascii=False),
             }
-            outline = _build_auction_outline(cluster) if domain == AUCTION_DOMAIN else _build_outline(cluster)
+            if domain == AUCTION_DOMAIN:
+                outline = _build_auction_outline(cluster)
+            elif domain == TAX_DOMAIN:
+                outline = _build_tax_outline(cluster)
+            else:
+                outline = _build_outline(cluster)
             cluster["outline_json"] = json.dumps(outline, ensure_ascii=False)
             family_buckets[blueprint.family].append(cluster)
 
@@ -611,7 +749,7 @@ def get_prompt(db_path: str | Path, variant_id: int | None = None, slug: str | N
     query = (
         """
         SELECT v.id, v.title, v.slug, v.angle, v.prompt_json, v.prompt_version, v.route_policy,
-               c.domain, c.primary_keyword, c.secondary_keyword, c.audience, c.search_intent, c.scenario
+               c.domain, c.primary_keyword, c.secondary_keyword, c.audience, c.search_intent, c.scenario, c.policy_json
         FROM topic_variant v
         JOIN topic_cluster c ON c.id = v.cluster_id
         WHERE v.id = ?
@@ -620,7 +758,7 @@ def get_prompt(db_path: str | Path, variant_id: int | None = None, slug: str | N
         else
         """
         SELECT v.id, v.title, v.slug, v.angle, v.prompt_json, v.prompt_version, v.route_policy,
-               c.domain, c.primary_keyword, c.secondary_keyword, c.audience, c.search_intent, c.scenario
+               c.domain, c.primary_keyword, c.secondary_keyword, c.audience, c.search_intent, c.scenario, c.policy_json
         FROM topic_variant v
         JOIN topic_cluster c ON c.id = v.cluster_id
         WHERE v.slug = ?
@@ -633,6 +771,8 @@ def get_prompt(db_path: str | Path, variant_id: int | None = None, slug: str | N
         return None
     result = dict(row)
     result["prompt_json"] = json.loads(result["prompt_json"])
+    if result.get("policy_json"):
+        result["policy_json"] = json.loads(result["policy_json"])
     return result
 
 

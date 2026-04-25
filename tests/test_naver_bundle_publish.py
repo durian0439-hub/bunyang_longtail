@@ -694,7 +694,7 @@ Q1. 바로 신청해도 되나요?
         self.assertNotIn("다음 글부터 관련 글이 자동으로 연결됩니다", markdown)
         self.assertNotIn("관련 글\n-", markdown)
 
-    def test_default_tags_expands_cheongyak_and_auction_to_naver_limit(self) -> None:
+    def test_default_tags_expands_cheongyak_auction_and_tax_to_naver_limit(self) -> None:
         cheongyak_tags = target.default_tags(
             "분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
             domain="cheongyak",
@@ -703,16 +703,43 @@ Q1. 바로 신청해도 되나요?
             "경매 권리분석과 말소기준권리, 잔금 대출까지 입찰 전 점검",
             domain="auction",
         )
+        tax_tags = target.default_tags(
+            "일시적 2주택 양도세, 1주택 갈아타기 준비자가 먼저 볼 기준",
+            domain="tax",
+        )
 
         self.assertEqual(len(cheongyak_tags), target.NAVER_TAG_LIMIT)
         self.assertEqual(len(auction_tags), target.NAVER_TAG_LIMIT)
+        self.assertEqual(len(tax_tags), target.NAVER_TAG_LIMIT)
         self.assertEqual(len(cheongyak_tags), len(set(cheongyak_tags)))
         self.assertEqual(len(auction_tags), len(set(auction_tags)))
+        self.assertEqual(len(tax_tags), len(set(tax_tags)))
         self.assertIn("분양계약금", cheongyak_tags)
         self.assertIn("중도금대출", cheongyak_tags)
         self.assertIn("말소기준권리", auction_tags)
         self.assertIn("경락잔금대출", auction_tags)
-        self.assertTrue(all(" " not in tag for tag in cheongyak_tags + auction_tags))
+        self.assertIn("양도세계산", tax_tags)
+        self.assertIn("홈택스", tax_tags)
+        self.assertTrue(all(" " not in tag for tag in cheongyak_tags + auction_tags + tax_tags))
+
+    def test_build_publish_bundle_tax_domain_uses_tax_copy_and_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle = build_publish_bundle(
+                bundle_id=123,
+                variant_title="일시적 2주택 양도세, 1주택 갈아타기 준비자가 먼저 볼 기준",
+                article_markdown="# 세금 초안\n\n짧은 초안",
+                output_root=tmpdir,
+                image_provider="local",
+                domain="tax",
+            )
+            meta = json.loads(Path(bundle.meta_path).read_text(encoding="utf-8"))
+            self.assertEqual(meta["domain"], "tax")
+            self.assertIn("부동산 세금", bundle.markdown)
+            self.assertIn("홈택스", bundle.markdown)
+            self.assertIn("위택스", bundle.markdown)
+            self.assertIn("양도세계산", bundle.tags)
+            self.assertIn("홈택스", bundle.tags)
+            self.assertNotIn("입주자모집공고", bundle.markdown)
 
     def test_build_publish_bundle_falls_back_to_local_when_gpt_image_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(

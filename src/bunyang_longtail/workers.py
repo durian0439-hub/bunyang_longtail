@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .catalog import AUCTION_DOMAIN
+from .catalog import AUCTION_DOMAIN, TAX_DOMAIN
 from .config import (
     GPT_WEB_ARTIFACT_DIR,
     OPENAI_COMPAT_ARTIFACT_DIR,
@@ -700,6 +700,34 @@ def _build_simulated_article_markdown(variant: dict[str, Any], image_roles: list
                 "A. 법원 서류와 현장, 대출 가능 여부를 대조한 뒤 결정해야 합니다.",
             ]
         )
+    if variant.get("domain") == TAX_DOMAIN:
+        return "\n".join(
+            [
+                f"# {variant['title']}",
+                "",
+                f"{audience} 기준으로 결론부터 보면, {primary_keyword}는 {scenario} 상황에서 세금 발생 시점과 계산 기준을 먼저 나눠봐야 합니다.",
+                "",
+                "## 상단 요약",
+                f"- 핵심 결론: {primary_keyword}와 {secondary_keyword}를 같이 보면 세금 계산에서 빠지는 항목을 줄일 수 있습니다.",
+                f"- 체크 포인트: {search_intent} 목적이면 주택 수, 명의, 보유기간, 신고기한 순서로 확인해야 합니다.",
+                f"- 이미지 세트: {image_text}",
+                "",
+                "## 왜 이 글을 먼저 봐야 하나",
+                f"이 변형안은 {audience}가 가장 자주 막히는 장면인 '{scenario}'를 기준으로 정리했습니다.",
+                "",
+                "## 핵심 판단",
+                f"{primary_keyword}만 보고 끝내기보다 {secondary_keyword}와 공식 확인 경로를 함께 봐야 실제 세금 부담을 더 현실적으로 볼 수 있습니다.",
+                "",
+                "## 체크리스트",
+                "- 주택 수, 명의, 보유기간 확인",
+                "- 취득가액, 필요경비, 공시가격 확인",
+                "- 홈택스, 위택스, 지자체 안내 확인",
+                "",
+                "## FAQ",
+                "Q. 계산기 결과만 보고 신고해도 되나요?",
+                "A. 계산기는 참고용입니다. 실제 적용은 시점과 개인 조건에 따라 달라질 수 있어 공식 안내와 전문가 확인이 필요할 수 있습니다.",
+            ]
+        )
     return "\n".join(
         [
             f"# {variant['title']}",
@@ -891,6 +919,8 @@ def run_bundle(
             article_markdown = _build_simulated_article_markdown(variant, roles)
             if variant.get("domain") == AUCTION_DOMAIN:
                 excerpt = f"{variant['audience']} 기준으로 {variant['primary_keyword']} 입찰 전 확인 순서를 빠르게 정리한 초안입니다."
+            elif variant.get("domain") == TAX_DOMAIN:
+                excerpt = f"{variant['audience']} 기준으로 {variant['primary_keyword']} 세금 확인 순서를 빠르게 정리한 초안입니다."
             else:
                 excerpt = f"{variant['audience']} 기준으로 {variant['primary_keyword']} 판단 포인트를 빠르게 정리한 초안입니다."
             text_result = complete_text_job(

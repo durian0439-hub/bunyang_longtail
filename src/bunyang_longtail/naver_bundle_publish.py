@@ -76,6 +76,15 @@ TOPIC_PUBLISH_HEADING_OVERRIDES = {
         "FAQ": "경매 초보 FAQ",
         "마무리 결론": "최종 입찰 판단",
     },
+    "tax": {
+        "이 글에서 바로 답하는 질문": "세금 계산 전에 먼저 볼 것",
+        "핵심 조건 정리": "부동산 세금 핵심 기준",
+        "헷갈리기 쉬운 예외": "감면·중과·비과세에서 자주 틀리는 부분",
+        "실전 예시 시나리오": "사례로 보는 세금 흐름",
+        "체크리스트": "신고 전 체크리스트",
+        "FAQ": "부동산 세금 FAQ",
+        "마무리 결론": "최종 확인 순서",
+    },
 }
 
 TOPIC_COLORS = {
@@ -83,6 +92,7 @@ TOPIC_COLORS = {
     "institution": {"accent": "#0F766E", "soft": "#ECFDF5", "bg": "#ECFDF5"},
     "cashflow": {"accent": "#EA580C", "soft": "#FFF7ED", "bg": "#FFF7ED"},
     "auction": {"accent": "#B45309", "soft": "#FEF3C7", "bg": "#FFF7ED"},
+    "tax": {"accent": "#047857", "soft": "#ECFDF5", "bg": "#F0FDF4"},
     "generic": {"accent": "#4338CA", "soft": "#EEF2FF", "bg": "#EEF2FF"},
 }
 
@@ -91,6 +101,7 @@ THUMBNAIL_CHIPS = {
     "institution": ["배우자 이력 구분", "세대 무주택 확인", "추천기관 기준 확인"],
     "cashflow": ["계약금 6천만원", "옵션비·취득세", "잔금 현금 확인"],
     "auction": ["권리·점유 확인", "입찰가 상한", "잔금·명도 점검"],
+    "tax": ["세금 발생 시점", "감면·중과 확인", "신고기한 점검"],
     "generic": ["핵심 조건 먼저", "일정과 자금 점검", "공고문 최종 확인"],
 }
 
@@ -117,6 +128,28 @@ DEFAULT_TAGS = [
     "특별공급",
     "청약통장",
     "부동산정보",
+]
+
+TAX_DEFAULT_TAGS = [
+    "부동산세금",
+    "주택세금",
+    "아파트세금",
+    "취득세",
+    "양도소득세",
+    "양도세",
+    "재산세",
+    "종합부동산세",
+    "종부세",
+    "증여세",
+    "상속세",
+    "부동산절세",
+    "세금계산",
+    "세금신고",
+    "홈택스",
+    "위택스",
+    "부동산정보",
+    "내집마련",
+    "부동산공부",
 ]
 
 AUCTION_DEFAULT_TAGS = [
@@ -218,7 +251,7 @@ def _strip_heading_markers(text: str) -> str:
 
 
 def _content_domain(title: str, explicit_domain: str | None = None) -> str:
-    if explicit_domain in {"auction", "cheongyak"}:
+    if explicit_domain in {"auction", "cheongyak", "tax"}:
         return str(explicit_domain)
     text = _clean(_strip_heading_markers(title))
     auction_tokens = (
@@ -227,6 +260,12 @@ def _content_domain(title: str, explicit_domain: str | None = None) -> str:
     )
     if any(token in text for token in auction_tokens):
         return "auction"
+    tax_tokens = (
+        "부동산 세금", "주택 세금", "취득세", "양도세", "양도소득세", "재산세", "종합부동산세", "종부세",
+        "증여세", "상속세", "홈택스", "위택스", "비과세", "장기보유특별공제", "공동명의", "간주임대료", "필요경비",
+    )
+    if any(token in text for token in tax_tokens):
+        return "tax"
     return "cheongyak"
 
 
@@ -234,6 +273,8 @@ def _topic_kind(title: str) -> str:
     text = _clean(_strip_heading_markers(title))
     if _content_domain(text) == "auction":
         return "auction"
+    if _content_domain(text) == "tax":
+        return "tax"
     if "1순위 조건" in text and "맞벌이" in text:
         return "ranking"
     if "기관추천 특별공급" in text and "노부모" in text:
@@ -319,7 +360,71 @@ def _needs_article_expansion(article_markdown: str) -> bool:
 
 def _synthesize_article_for_publish(title: str, *, domain: str | None = None) -> str:
     content_domain = _content_domain(title, domain)
-    normalized_title = _clean(_strip_heading_markers(title)) or ("부동산 경매 how to" if content_domain == "auction" else "분양청약 how to")
+    normalized_title = _clean(_strip_heading_markers(title)) or ("부동산 경매 how to" if content_domain == "auction" else "부동산 세금 how to" if content_domain == "tax" else "분양청약 how to")
+
+    if content_domain == "tax":
+        return f"""{normalized_title}
+상단 요약
+
+부동산 세금은 세목 이름보다 세금이 생기는 시점과 계산 기준을 먼저 나눠야 합니다. 같은 취득세나 양도세라도 주택 수, 보유기간, 명의, 취득·양도 시점에 따라 결과가 달라질 수 있습니다.
+
+이 글은 세무 상담을 대신하는 글이 아니라, 홈택스·위택스·지자체 안내를 확인하기 전에 내 상황에서 무엇을 먼저 정리해야 하는지 보는 체크용 글입니다.
+
+이 글에서 바로 답하는 질문
+
+어떤 세금이 언제 발생하는가
+계산 전에 어떤 기준을 먼저 확인해야 하는가
+감면, 중과, 비과세에서 자주 놓치는 부분은 무엇인가
+신고 전에 어떤 서류와 기한을 챙겨야 하는가
+
+핵심 조건 정리
+
+부동산 세금은 보통 취득, 보유, 양도, 증여·상속, 임대소득 단계로 나눠서 보면 헷갈림이 줄어듭니다. 먼저 내가 지금 어느 단계에 있는지 정해야 합니다.
+- 매수나 분양 잔금 전이면 취득세와 지방교육세를 봅니다.
+- 보유 중이면 재산세, 종합부동산세, 과세기준일을 봅니다.
+- 매도 전이면 양도세, 보유기간, 거주기간, 필요경비를 봅니다.
+- 가족 간 이전이면 증여세, 상속세, 자금출처를 함께 봅니다.
+- 임대를 놓으면 임대소득 신고 여부를 확인합니다.
+
+헷갈리기 쉬운 예외
+
+감면이나 비과세는 이름만 보고 적용하면 안 됩니다. 생애최초 취득세 감면, 1세대 1주택 비과세, 장기보유특별공제처럼 익숙한 제도도 취득 시점, 주택 수, 보유·거주기간, 가격 기준에 따라 달라질 수 있습니다.
+
+공동명의도 항상 유리하다고 단정하기 어렵습니다. 종부세, 양도세, 증여세, 건강보험료 같은 다른 부담까지 같이 봐야 합니다.
+
+실전 예시 시나리오
+
+예를 들어 1주택자가 새 집을 먼저 사고 기존 집을 나중에 파는 경우라면 취득세와 양도세를 따로 보면 안 됩니다. 새 집 취득 시점, 기존 집 처분 기한, 일시적 2주택 요건, 양도세 비과세 가능성을 한 표에 놓고 봐야 합니다.
+
+분양권이나 입주권을 가진 경우도 마찬가지입니다. 일반 주택과 세금 처리 시점이 다를 수 있으니 계약일, 잔금일, 전매 여부, 주택 수 포함 여부를 따로 확인해야 합니다.
+
+체크리스트
+
+내 상황이 취득, 보유, 양도, 증여·상속, 임대 중 어디에 해당하는지 나눴는가
+주택 수, 명의, 보유기간, 거주기간을 날짜 기준으로 정리했는가
+취득가액, 필요경비, 공시가격, 실거래가 중 어떤 금액을 써야 하는지 확인했는가
+감면이나 비과세 요건을 공식 안내 기준으로 다시 봤는가
+신고기한과 납부기한을 놓치지 않게 캘린더에 표시했는가
+홈택스, 위택스, 지자체 안내 또는 세무 전문가 확인이 필요한 부분을 따로 표시했는가
+
+FAQ
+
+Q1. 부동산 세금은 계산기로만 보면 되나요?
+계산기는 대략적인 금액을 보는 데 도움이 됩니다. 다만 주택 수, 보유기간, 감면 요건을 잘못 넣으면 결과도 달라지기 때문에 공식 안내와 함께 봐야 합니다.
+
+Q2. 1주택이면 세금 걱정이 적은가요?
+1주택이라고 항상 단순하지는 않습니다. 취득 시점, 보유기간, 거주기간, 가격 기준에 따라 취득세와 양도세 결과가 달라질 수 있습니다.
+
+Q3. 공동명의는 무조건 절세인가요?
+그렇게 단정하기 어렵습니다. 세목마다 유리한 지점이 다르고, 증여세나 건강보험료 같은 다른 부담도 같이 봐야 합니다.
+
+Q4. 최종 확인은 어디서 해야 하나요?
+취득세와 재산세는 위택스와 지자체 안내를, 양도세·증여세·상속세·종합소득세는 국세청과 홈택스를 먼저 확인하는 것이 좋습니다. 금액이 크거나 조건이 복잡하면 세무 전문가 상담이 필요할 수 있습니다.
+
+마무리 결론
+
+부동산 세금은 한 번에 외우는 문제가 아니라 내 거래 시점과 보유 상황을 순서대로 맞추는 문제입니다. 먼저 세금이 생기는 단계를 나누고, 주택 수와 날짜, 명의, 금액 기준을 정리한 뒤 공식 안내로 마지막 확인을 거치면 실수를 줄일 수 있습니다.
+"""
 
     if content_domain == "auction":
         return f"""{normalized_title}
@@ -635,6 +740,8 @@ def _intro_text(sections: list[PublishSection], *, domain: str | None = None) ->
     fallback = (
         "오늘은 경매 입찰 전 권리, 점유, 자금 리스크를 어떤 순서로 확인해야 하는지 빠르게 정리해보겠습니다."
         if domain == "auction"
+        else "오늘은 부동산 세금이 언제 생기고 어떤 기준으로 계산되는지 빠르게 정리해보겠습니다."
+        if domain == "tax"
         else "오늘은 분양청약 판단이 헷갈릴 때 어떻게 순서를 잡아야 하는지 빠르게 정리해보겠습니다."
     )
     if not sections:
@@ -2061,6 +2168,12 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
             "",
             _intro_text(sections, domain="auction"),
         ]
+    if content_domain == "tax":
+        return [
+            "부동산 세금은 세목 이름보다 언제 발생하고 어떤 기준으로 계산되는지부터 나눠보는 것이 중요합니다.",
+            "",
+            _intro_text(sections, domain="tax"),
+        ]
     if topic == "cashflow":
         return [
             "분양가 6억원이면 계약금 6천만원으로 끝나지 않습니다. 옵션비와 취득세, 잔금 시점 현금까지 같이 보면 실제 준비금이 더 커집니다.",
@@ -2092,6 +2205,7 @@ BOOK_NOTICE_TEXT = '"이 포스팅은 쿠팡 파트너스 활동의 일환으로
 RELATED_CATEGORY_LABELS = {
     "cheongyak": "How To 분양",
     "auction": "How To 경매",
+    "tax": "How To 세금",
 }
 
 
@@ -2132,12 +2246,14 @@ def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dic
 
 def _validate_domain_publish_markdown(markdown: str, *, domain: str | None = None) -> None:
     content_domain = _content_domain("", domain)
-    if content_domain != "auction":
+    if content_domain not in {"auction", "tax"}:
         return
-    forbidden_terms = ["청약홈", "입주자모집공고", "분양청약"]
+    forbidden_terms = ["청약홈", "입주자모집공고", "분양청약"] if content_domain == "auction" else ["입찰보증금", "매각물건명세서", "인도명령"]
     found = [term for term in forbidden_terms if term in str(markdown or "")]
     if found:
-        raise ValueError(f"경매 발행 본문에 청약 도메인 용어가 섞였습니다: {', '.join(found)}")
+        if content_domain == "auction":
+            raise ValueError(f"경매 발행 본문에 청약 도메인 용어가 섞였습니다: {', '.join(found)}")
+        raise ValueError(f"세금 발행 본문에 다른 도메인 용어가 섞였습니다: {', '.join(found)}")
 
 
 def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset], related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> str:
@@ -2176,8 +2292,11 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
             lines.append(f"[[IMAGE:{image_index}]]")
             lines.append("")
 
-    if _content_domain(title, domain) == "auction":
+    content_domain = _content_domain(title, domain)
+    if content_domain == "auction":
         lines.append("경매 일정과 권리관계, 점유 상태, 대출 가능 여부는 사건별로 달라질 수 있으니 입찰 전 법원경매정보와 관련 서류로 다시 확인해보시기 바랍니다.")
+    elif content_domain == "tax":
+        lines.append("세율과 감면, 비과세 적용은 시점과 개인 조건에 따라 달라질 수 있으니 홈택스·위택스·지자체 안내와 필요 시 세무 전문가 확인을 함께 거치시기 바랍니다.")
     else:
         lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
     lines.append("")
@@ -2199,6 +2318,19 @@ def default_tags(title: str, *, domain: str | None = None) -> list[str]:
         if any(token in text for token in ["대출", "잔금", "취득세", "수리비", "자금", "비용"]):
             tags.extend(["경락잔금대출", "경매비용", "취득세", "수리비", "체납관리비", "낙찰가율", "입찰가계산"])
         tags.extend(["경매서류", "경매물건검색", "경매리스크", "부동산경매입찰", "경매실전", "부동산투자", "경매시세", "경매사건번호", "경매감정가", "경매최저가", "경매유찰"])
+    elif content_domain == "tax":
+        tags = list(TAX_DEFAULT_TAGS)
+        if any(token in text for token in ["취득세", "감면", "생애최초", "위택스"]):
+            tags.extend(["취득세계산", "취득세감면", "생애최초취득세", "위택스", "지방세"])
+        if any(token in text for token in ["양도세", "양도소득세", "비과세", "장기보유", "필요경비"]):
+            tags.extend(["양도세계산", "양도세비과세", "장기보유특별공제", "필요경비", "홈택스"])
+        if any(token in text for token in ["재산세", "종부세", "종합부동산세", "보유세", "공시가격"]):
+            tags.extend(["보유세", "재산세계산", "종부세계산", "공시가격", "과세기준일"])
+        if any(token in text for token in ["증여", "상속", "자금출처"]):
+            tags.extend(["증여세", "상속세", "자금출처조사", "부담부증여", "상속주택"])
+        if any(token in text for token in ["임대", "월세", "간주임대료", "종합소득세"]):
+            tags.extend(["주택임대소득세", "월세소득세", "간주임대료", "종합소득세", "임대사업자"])
+        tags.extend(["부동산세금계산", "세금신고기한", "부동산세무", "절세체크리스트", "세무상담", "세금납부", "지방세납부", "국세청"])
     else:
         tags = list(DEFAULT_TAGS)
         topic = _topic_kind(title)
@@ -2231,7 +2363,7 @@ def _emphasize_publish_text(line: str) -> str:
     if not text or text.startswith("[[IMAGE:"):
         return text
     text = re.sub(r"^(주의|핵심|결론|요약|포인트|체크|질문|답변|예시|정리)(\s*[:：])", r"<strong>\1\2</strong>", text)
-    text = re.sub(r"(일반공급 1순위|특별공급|청약통장|예치금|거주요건|무주택|소득과 자산|계약금|중도금|잔금|취득세|체크리스트|FAQ|How To 분양|법원경매|권리분석|말소기준권리|입찰보증금|선순위 임차인|대항력|배당요구|명도|인도명령|유치권|경락잔금대출|How To 경매)", r"<strong>\1</strong>", text)
+    text = re.sub(r"(일반공급 1순위|특별공급|청약통장|예치금|거주요건|무주택|소득과 자산|계약금|중도금|잔금|취득세|체크리스트|FAQ|How To 분양|법원경매|권리분석|말소기준권리|입찰보증금|선순위 임차인|대항력|배당요구|명도|인도명령|유치권|경락잔금대출|How To 경매|부동산 세금|양도세|양도소득세|재산세|종합부동산세|종부세|증여세|상속세|홈택스|위택스|비과세|감면|신고기한|How To 세금)", r"<strong>\1</strong>", text)
     return text
 
 
