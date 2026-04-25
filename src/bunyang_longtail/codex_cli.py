@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import ensure_data_dir
 from .gpt_web import build_text_prompt
+from .humanize_style import detect_ai_tell_findings, summarize_findings
 
 
 class CodexCLIExecutionError(RuntimeError):
@@ -112,6 +113,13 @@ def _resolve_codex_executable() -> str:
 
 
 def _validate_house_style(article_markdown: str) -> None:
+    humanize_findings = detect_ai_tell_findings(article_markdown, min_severity="S2")
+    if humanize_findings:
+        raise CodexCLIExecutionError(
+            "humanize-korean 스타일 가드 감지: " + summarize_findings(humanize_findings),
+            code="CODEX_CLI_STYLE_GUARD_FAILED",
+        )
+
     for pattern in BANNED_STYLE_PATTERNS:
         if re.search(pattern, article_markdown):
             raise CodexCLIExecutionError(
@@ -237,6 +245,8 @@ def _build_style_rewrite_prompt(*, article_markdown: str, failure_message: str, 
             "핵심 정보, 제목, 섹션 구조, 사례, FAQ 개수는 유지하고 말투만 교정해야 합니다.",
             f"이번 교정 사유: {failure_message}",
             "교정 규칙:",
+            "- humanize-korean 기준을 적용합니다. 내용·수치·고유명사·직접 인용은 보존하고 문체·리듬·표현만 고칩니다.",
+            "- '~를 통해', '~에 대해', '~에 있어서', '할 수 있습니다', '것입니다', '결론적으로', '시사하는 바가 크다', 문두 '또한/따라서/즉/나아가' 같은 AI 번역투·관용구를 제거합니다.",
             "- '판단이 맞습니다', '보는 게 맞습니다', '이 전략이 맞습니다', '청약 판단을 빨리 끝내려면', '결론은 단순합니다' 같은 상투 표현을 쓰지 않습니다.",
             "- '안전합니다' 종결은 최대 1회만 허용하고, 반복되면 다른 자연스러운 표현으로 바꿉니다.",
             "- FAQ 답변을 '그렇습니다.' 같은 한 단어 단정형으로 시작하지 않습니다.",

@@ -44,6 +44,7 @@ from bunyang_longtail.gpt_web import (
     build_text_prompt,
 )
 from bunyang_longtail.local_image_fallback import _summary_points, _summary_source, render_fallback_thumbnail
+from bunyang_longtail.humanize_style import detect_ai_tell_findings, summarize_findings
 from bunyang_longtail.openai_compat import OpenAICompatExecutionError, probe_openai_compat
 from bunyang_longtail.planner import _topic_scene, export_prompts, get_prompt, list_variants, mark_published, replenish_queue, stats
 from bunyang_longtail.workers import (
@@ -1002,6 +1003,21 @@ class LongtailPlannerTest(unittest.TestCase):
         with self.assertRaises(CodexCLIExecutionError) as exc_info:
             _validate_house_style("# 제목\n\n이 경우 공급유형부터 나눠야 판단이 맞습니다.")
         self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
+    def test_humanize_style_detector_flags_korean_ai_tells(self) -> None:
+        findings = detect_ai_tell_findings(
+            "# 제목\n\n결론적으로 이 제도를 통해 효율을 높일 수 있습니다. 또한 시사하는 바가 크다."
+        )
+        summary = summarize_findings(findings)
+        self.assertTrue(any(finding.pattern_id == "D-1" for finding in findings))
+        self.assertTrue(any(finding.pattern_id == "A-2" for finding in findings))
+        self.assertIn("D-1", summary)
+
+    def test_validate_house_style_rejects_humanize_korean_ai_tell(self) -> None:
+        with self.assertRaises(CodexCLIExecutionError) as exc_info:
+            _validate_house_style("# 제목\n\n결론적으로 세금 기준은 주택 수 산정을 통해 달라질 수 있습니다.")
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+        self.assertIn("humanize-korean", str(exc_info.exception))
 
     def test_validate_house_style_rejects_weak_intro(self) -> None:
         weak_intro = "# 제목\n\n청약 판단을 빨리 끝내려면 조건을 한 줄씩 분리해서 보셔야 합니다.\n\n당첨 직후 가장 먼저 확인할 결론은 단순합니다. 무주택 실수요자라도 입주자모집공고 기준과 제출 서류가 맞으면 진행할 수 있지만, 기준일과 세대 범위, 주택 수 판단이 어긋나면 당첨 이후에도 계약이 어려워질 수 있습니다."
