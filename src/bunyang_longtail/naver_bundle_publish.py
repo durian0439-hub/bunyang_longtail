@@ -85,6 +85,15 @@ TOPIC_PUBLISH_HEADING_OVERRIDES = {
         "FAQ": "부동산 세금 FAQ",
         "마무리 결론": "최종 확인 순서",
     },
+    "loan": {
+        "이 글에서 바로 답하는 질문": "대출 가능성 전에 먼저 볼 것",
+        "핵심 조건 정리": "부동산 대출 핵심 기준",
+        "헷갈리기 쉬운 예외": "한도·금리·심사에서 자주 막히는 부분",
+        "실전 예시 시나리오": "사례로 보는 대출 흐름",
+        "체크리스트": "은행 상담 전 체크리스트",
+        "FAQ": "부동산 대출 FAQ",
+        "마무리 결론": "최종 확인 순서",
+    },
 }
 
 TOPIC_COLORS = {
@@ -93,6 +102,7 @@ TOPIC_COLORS = {
     "cashflow": {"accent": "#EA580C", "soft": "#FFF7ED", "bg": "#FFF7ED"},
     "auction": {"accent": "#B45309", "soft": "#FEF3C7", "bg": "#FFF7ED"},
     "tax": {"accent": "#047857", "soft": "#ECFDF5", "bg": "#F0FDF4"},
+    "loan": {"accent": "#1D4ED8", "soft": "#EFF6FF", "bg": "#F0F9FF"},
     "generic": {"accent": "#4338CA", "soft": "#EEF2FF", "bg": "#EEF2FF"},
 }
 
@@ -102,6 +112,7 @@ THUMBNAIL_CHIPS = {
     "cashflow": ["계약금 6천만원", "옵션비·취득세", "잔금 현금 확인"],
     "auction": ["권리·점유 확인", "입찰가 상한", "잔금·명도 점검"],
     "tax": ["세금 발생 시점", "감면·중과 확인", "신고기한 점검"],
+    "loan": ["DSR·LTV 확인", "한도·금리 점검", "실행일 체크"],
     "generic": ["핵심 조건 먼저", "일정과 자금 점검", "공고문 최종 확인"],
 }
 
@@ -150,6 +161,29 @@ TAX_DEFAULT_TAGS = [
     "부동산정보",
     "내집마련",
     "부동산공부",
+]
+
+LOAN_DEFAULT_TAGS = [
+    "부동산대출",
+    "주택담보대출",
+    "주담대",
+    "대출한도",
+    "대출금리",
+    "DSR",
+    "LTV",
+    "DTI",
+    "스트레스DSR",
+    "중도금대출",
+    "잔금대출",
+    "전세자금대출",
+    "디딤돌대출",
+    "보금자리론",
+    "신생아특례대출",
+    "전세퇴거자금대출",
+    "대환대출",
+    "은행상담",
+    "부동산정보",
+    "내집마련",
 ]
 
 AUCTION_DEFAULT_TAGS = [
@@ -251,7 +285,7 @@ def _strip_heading_markers(text: str) -> str:
 
 
 def _content_domain(title: str, explicit_domain: str | None = None) -> str:
-    if explicit_domain in {"auction", "cheongyak", "tax"}:
+    if explicit_domain in {"auction", "cheongyak", "tax", "loan"}:
         return str(explicit_domain)
     text = _clean(_strip_heading_markers(title))
     auction_tokens = (
@@ -266,6 +300,13 @@ def _content_domain(title: str, explicit_domain: str | None = None) -> str:
     )
     if any(token in text for token in tax_tokens):
         return "tax"
+    loan_tokens = (
+        "부동산 대출", "주택담보대출", "주담대", "대출한도", "대출금리", "중도금 대출", "잔금대출",
+        "전세자금대출", "DSR", "LTV", "DTI", "스트레스 DSR", "디딤돌대출", "보금자리론",
+        "신생아 특례대출", "경락잔금대출", "전세퇴거자금", "대환대출", "은행 심사",
+    )
+    if any(token in text for token in loan_tokens):
+        return "loan"
     return "cheongyak"
 
 
@@ -275,6 +316,8 @@ def _topic_kind(title: str) -> str:
         return "auction"
     if _content_domain(text) == "tax":
         return "tax"
+    if _content_domain(text) == "loan":
+        return "loan"
     if "1순위 조건" in text and "맞벌이" in text:
         return "ranking"
     if "기관추천 특별공급" in text and "노부모" in text:
@@ -360,7 +403,69 @@ def _needs_article_expansion(article_markdown: str) -> bool:
 
 def _synthesize_article_for_publish(title: str, *, domain: str | None = None) -> str:
     content_domain = _content_domain(title, domain)
-    normalized_title = _clean(_strip_heading_markers(title)) or ("부동산 경매 how to" if content_domain == "auction" else "부동산 세금 how to" if content_domain == "tax" else "분양청약 how to")
+    normalized_title = _clean(_strip_heading_markers(title)) or ("부동산 경매 how to" if content_domain == "auction" else "부동산 세금 how to" if content_domain == "tax" else "부동산 대출 how to" if content_domain == "loan" else "분양청약 how to")
+
+    if content_domain == "loan":
+        return f"""{normalized_title}
+상단 요약
+
+부동산 대출은 상품 이름보다 내 소득, 기존 대출, 주택 수, 담보가치, 실행일을 먼저 봐야 합니다. 같은 주택담보대출이나 잔금대출이라도 DSR, LTV, 신용, 은행 심사에 따라 한도와 금리가 달라질 수 있습니다.
+
+이 글은 금융 상담을 대신하는 글이 아니라, 은행 상담 전에 내 상황에서 무엇을 정리해야 하는지 보는 체크용 글입니다.
+
+이 글에서 바로 답하는 질문
+
+어떤 대출을 먼저 확인해야 하는가
+한도와 금리는 어떤 기준에서 달라지는가
+DSR, LTV, 실행일에서 자주 막히는 부분은 무엇인가
+은행 상담 전에 어떤 서류와 조건을 준비해야 하는가
+
+핵심 조건 정리
+
+부동산 대출은 보통 매매계약 전, 중도금, 잔금, 전세보증금 반환, 대환 단계로 나눠서 보면 덜 헷갈립니다. 먼저 내가 지금 어느 단계에 있는지 정해야 합니다.
+- 매매 전이면 주담대 한도, LTV, DSR, 자기자금을 봅니다.
+- 분양 중이면 중도금대출과 잔금대출 전환 가능성을 봅니다.
+- 입주 직전이면 잔금 실행일, 필요서류, 기존 대출을 봅니다.
+- 전세보증금을 돌려줘야 하면 전세퇴거자금과 보증금 반환 한도를 봅니다.
+- 금리가 부담되면 대환 가능성과 중도상환수수료를 함께 봅니다.
+
+헷갈리기 쉬운 예외
+
+대출한도는 단순히 집값에 비례하지 않습니다. 소득, 신용점수, 기존 대출, 주택 수, 규제지역, 담보가치, 금융기관 심사가 같이 들어갑니다.
+
+정책대출도 이름만 보고 가능하다고 판단하면 안 됩니다. 소득기준, 자산기준, 주택가격, 세대 요건, 신청 시점이 맞아야 합니다.
+
+실전 예시 시나리오
+
+예를 들어 분양 아파트 입주를 앞둔 실수요자라면 잔금대출만 보면 부족합니다. 중도금대출 상환, 옵션비, 취득세, 이사비, 기존 전세보증금 회수 시점까지 한 표에 놓고 봐야 합니다.
+
+체크리스트
+
+내 대출 목적이 매매, 중도금, 잔금, 전세, 대환 중 어디에 해당하는지 나눴는가
+연소득, 기존 대출, 신용점수, 주택 수를 정리했는가
+DSR, LTV, DTI 중 어떤 기준이 내 한도에 영향을 주는지 확인했는가
+대출 실행일과 잔금일, 입주일이 맞는지 확인했는가
+필요서류와 은행 심사 기간을 미리 확인했는가
+한국주택금융공사, 주택도시기금, 금융감독원, 은행 상담으로 최종 조건을 확인했는가
+
+FAQ
+
+Q1. 대출한도 계산기만 보면 되나요?
+계산기는 대략적인 범위를 보는 데 도움이 됩니다. 다만 실제 한도는 소득, 신용, 기존 대출, 담보평가, 은행 심사에 따라 달라질 수 있습니다.
+
+Q2. DSR이 낮으면 무조건 대출이 많이 나오나요?
+그렇게 단정하기 어렵습니다. DSR 외에도 LTV, 주택 수, 담보가치, 금융기관 내부 기준이 함께 작용합니다.
+
+Q3. 정책대출은 조건만 맞으면 바로 되나요?
+조건에 가까워 보여도 소득, 자산, 주택가격, 세대 요건, 신청 가능 시점이 맞아야 합니다. 공식 안내와 은행 상담으로 확인해야 합니다.
+
+Q4. 최종 확인은 어디서 해야 하나요?
+정책대출은 한국주택금융공사와 주택도시기금 안내를 먼저 보고, 실제 실행 가능성은 취급 은행 상담으로 확인하는 것이 좋습니다.
+
+마무리 결론
+
+부동산 대출은 상품명을 외우는 문제가 아니라 내 소득, 주택 수, 기존 대출, 담보가치, 실행일을 순서대로 맞추는 문제입니다. 먼저 필요한 대출 종류를 나누고, DSR과 LTV, 필요서류를 정리한 뒤 은행 상담으로 마지막 확인을 거치면 실수를 줄일 수 있습니다.
+"""
 
     if content_domain == "tax":
         return f"""{normalized_title}
@@ -2178,6 +2283,12 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
             "",
             _intro_text(sections, domain="tax"),
         ]
+    if content_domain == "loan":
+        return [
+            "부동산 대출은 상품명보다 소득·기존 대출·주택 수·실행일을 먼저 나눠보는 것이 중요합니다.",
+            "",
+            _intro_text(sections, domain="loan"),
+        ]
     if topic == "cashflow":
         return [
             "분양가 6억원이면 계약금 6천만원으로 끝나지 않습니다. 옵션비와 취득세, 잔금 시점 현금까지 같이 보면 실제 준비금이 더 커집니다.",
@@ -2210,6 +2321,7 @@ RELATED_CATEGORY_LABELS = {
     "cheongyak": "How To 분양",
     "auction": "How To 경매",
     "tax": "How To 세금",
+    "loan": "부동산 대출",
 }
 
 
@@ -2250,14 +2362,21 @@ def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dic
 
 def _validate_domain_publish_markdown(markdown: str, *, domain: str | None = None) -> None:
     content_domain = _content_domain("", domain)
-    if content_domain not in {"auction", "tax"}:
+    if content_domain not in {"auction", "tax", "loan"}:
         return
-    forbidden_terms = ["청약홈", "입주자모집공고", "분양청약"] if content_domain == "auction" else ["입찰보증금", "매각물건명세서", "인도명령"]
+    forbidden_map = {
+        "auction": ["청약홈", "입주자모집공고", "분양청약"],
+        "tax": ["입찰보증금", "매각물건명세서", "인도명령"],
+        "loan": ["매각물건명세서", "인도명령", "세무조사 피하는 법"],
+    }
+    forbidden_terms = forbidden_map[content_domain]
     found = [term for term in forbidden_terms if term in str(markdown or "")]
     if found:
         if content_domain == "auction":
             raise ValueError(f"경매 발행 본문에 청약 도메인 용어가 섞였습니다: {', '.join(found)}")
-        raise ValueError(f"세금 발행 본문에 다른 도메인 용어가 섞였습니다: {', '.join(found)}")
+        if content_domain == "tax":
+            raise ValueError(f"세금 발행 본문에 다른 도메인 용어가 섞였습니다: {', '.join(found)}")
+        raise ValueError(f"대출 발행 본문에 다른 도메인 용어가 섞였습니다: {', '.join(found)}")
 
 
 def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset], related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> str:
@@ -2301,6 +2420,8 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
         lines.append("경매 일정과 권리관계, 점유 상태, 대출 가능 여부는 사건별로 달라질 수 있으니 입찰 전 법원경매정보와 관련 서류로 다시 확인해보시기 바랍니다.")
     elif content_domain == "tax":
         lines.append("세율과 감면, 비과세 적용은 시점과 개인 조건에 따라 달라질 수 있으니 홈택스·위택스·지자체 안내와 필요 시 세무 전문가 확인을 함께 거치시기 바랍니다.")
+    elif content_domain == "loan":
+        lines.append("대출 한도와 금리, 승인 여부는 소득·신용·주택 수·담보가치·금융기관 심사에 따라 달라질 수 있으니 공식 안내와 은행 상담으로 최종 확인하시기 바랍니다.")
     else:
         lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
     lines.append("")
@@ -2335,6 +2456,17 @@ def default_tags(title: str, *, domain: str | None = None) -> list[str]:
         if any(token in text for token in ["임대", "월세", "간주임대료", "종합소득세"]):
             tags.extend(["주택임대소득세", "월세소득세", "간주임대료", "종합소득세", "임대사업자"])
         tags.extend(["부동산세금계산", "세금신고기한", "부동산세무", "절세체크리스트", "세무상담", "세금납부", "지방세납부", "국세청"])
+    elif content_domain == "loan":
+        tags = list(LOAN_DEFAULT_TAGS)
+        if any(token in text for token in ["DSR", "LTV", "DTI", "스트레스"]):
+            tags.extend(["스트레스DSR", "대출규제", "주담대한도", "소득산정", "주택수산정"])
+        if any(token in text for token in ["중도금", "잔금", "분양", "입주"]):
+            tags.extend(["중도금대출", "잔금대출", "입주잔금", "분양권대출", "집단대출"])
+        if any(token in text for token in ["신생아", "디딤돌", "보금자리", "정책"]):
+            tags.extend(["정책대출", "디딤돌대출", "보금자리론", "신생아특례", "주택도시기금"])
+        if any(token in text for token in ["전세", "퇴거", "보증금", "역전세"]):
+            tags.extend(["전세대출", "전세퇴거자금", "보증금반환", "버팀목전세대출", "역전세"])
+        tags.extend(["은행상담", "대출심사", "금리비교", "대출체크리스트", "내집마련대출"])
     else:
         tags = list(DEFAULT_TAGS)
         topic = _topic_kind(title)

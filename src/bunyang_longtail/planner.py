@@ -17,6 +17,7 @@ from .catalog import (
     NAVER_SEO_SECTIONS,
     SUPPORTED_DOMAINS,
     TAX_DOMAIN,
+    LOAN_DOMAIN,
     TOPIC_BLUEPRINTS,
 )
 from .database import connect, fetch_all, fetch_one, init_db
@@ -301,6 +302,24 @@ def _build_tax_outline(cluster: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+
+def _build_loan_outline(cluster: dict[str, Any]) -> list[dict[str, Any]]:
+    primary = cluster["primary_keyword"]
+    secondary = cluster["secondary_keyword"]
+    audience = cluster["audience"]
+    scenario = cluster["scenario"]
+    comparison = cluster["comparison_keyword"] or secondary
+    return [
+        {"heading": "상단 요약", "points": [f"{audience} 기준 {primary}에서 먼저 확인할 대출 가능성", f"{scenario} 보기 전에 소득·주택수·담보가치·실행일을 정리"]},
+        {"heading": "이 글에서 바로 답하는 질문", "points": [f"{primary}{_particle(primary, ('이', '가'))} 어떤 상황에서 필요한지", f"{comparison}{_particle(comparison, ('과', '와'))} 어떤 기준으로 비교해야 하는지"]},
+        {"heading": "핵심 조건 정리", "points": [f"{primary} 기본 구조와 은행 심사 흐름", f"{secondary}{_particle(secondary, ('과', '와'))} 함께 확인할 DSR·LTV·소득 기준"]},
+        {"heading": "헷갈리기 쉬운 예외", "points": [f"{scenario} 자주 놓치는 한도·금리·실행일 예외", "승인 가능성, 한도, 금리가 개인 조건과 금융기관 심사에서 달라지는 부분"]},
+        {"heading": "실전 예시 시나리오", "points": [f"{audience} 가상 사례 1개", "대출 가능성, 부족 자금, 은행 상담 전 확인 순서"]},
+        {"heading": "체크리스트", "points": ["은행 상담 전 확인할 항목 5개 이상", "소득증빙, 기존대출, 주택수, 담보가치, 실행일, 필요서류 순서"]},
+        {"heading": "FAQ", "points": [f"{primary} 관련 자주 묻는 질문 6개 이상", "확정 답변 대신 조건과 공식 확인 위치를 짧게 답변"]},
+        {"heading": "마무리 결론", "points": [f"{audience}에게 맞는 다음 확인 순서 1줄", "한도·금리·승인 여부는 금융기관 심사로 최종 확인하도록 안내"]},
+    ]
+
 def _compose_auction_title(cluster: dict[str, Any], angle: str) -> str:
     primary = cluster["primary_keyword"]
     audience = cluster["audience"]
@@ -381,11 +400,50 @@ def _compose_tax_title(cluster: dict[str, Any], angle: str) -> str:
     return _clean(title)
 
 
+
+def _compose_loan_title(cluster: dict[str, Any], angle: str) -> str:
+    primary = cluster["primary_keyword"]
+    audience = cluster["audience"]
+    scenario = cluster["scenario"]
+    intent = cluster["search_intent"]
+    comparison = cluster["comparison_keyword"] or cluster["secondary_keyword"]
+    topic_scene = _topic_scene(primary, scenario)
+    if angle == "비교형":
+        title = f"{primary}{_particle(primary, ('과', '와'))} {comparison}, 한도와 조건 차이"
+    elif angle == "실수방지형":
+        title = f"{topic_scene}, 대출 심사 전에 놓치면 막히는 기준"
+    elif angle == "체크리스트형":
+        title = f"{topic_scene}, 은행 상담 전 체크리스트"
+    elif angle == "사례형":
+        title = f"{topic_scene}, 사례로 보는 한도 확인 순서"
+    elif angle == "FAQ형":
+        title = f"{primary} FAQ, {audience}가 가장 헷갈리는 질문"
+    else:
+        if intent == "계산":
+            title = f"{topic_scene}, 실제 한도와 월 상환액 보는 순서"
+        elif intent == "가능여부":
+            title = f"{topic_scene}, 대출 가능할지 먼저 볼 기준"
+        elif intent == "비교":
+            title = f"{primary}{_particle(primary, ('과', '와'))} {comparison}, {audience} 기준 차이"
+        elif intent == "실수방지":
+            title = f"{topic_scene}, 대출에서 자주 막히는 부분"
+        elif intent == "체크리스트":
+            title = f"{topic_scene}, 실행 전 확인할 순서"
+        elif intent == "사례":
+            title = f"{topic_scene}, 실제 사례로 보는 기준"
+        elif intent == "FAQ":
+            title = f"{primary} 자주 묻는 질문, 대출 기준 정리"
+        else:
+            title = f"{topic_scene}, {audience}가 먼저 볼 기준"
+    return _clean(title)
+
 def _compose_title(cluster: dict[str, Any], angle: str) -> str:
     if cluster.get("domain") == AUCTION_DOMAIN:
         return _compose_auction_title(cluster, angle)
     if cluster.get("domain") == TAX_DOMAIN:
         return _compose_tax_title(cluster, angle)
+    if cluster.get("domain") == LOAN_DOMAIN:
+        return _compose_loan_title(cluster, angle)
 
     primary = cluster["primary_keyword"]
     audience = cluster["audience"]
@@ -461,6 +519,8 @@ def _domain_keyword_sources(domain: str) -> list[str]:
         return ["google_autocomplete", "naver_autocomplete", "bing_osjson", "daum_suggest", "courtauction.go.kr", "onbid.co.kr"]
     if domain == TAX_DOMAIN:
         return _tax_keyword_sources()
+    if domain == LOAN_DOMAIN:
+        return ["google_autocomplete", "naver_autocomplete", "bing_osjson", "daum_suggest", "hf.go.kr", "nhuf.molit.go.kr", "fss.or.kr", "kfb.or.kr"]
     return []
 
 
@@ -486,6 +546,8 @@ def _estimate_seo_score(title: str, cluster: dict[str, Any]) -> int:
     if any(word in title for word in ["정리", "가능할까", "체크리스트", "FAQ", "차이"]):
         score += 5
     if cluster.get("domain") == TAX_DOMAIN and any(word in title for word in ["계산", "신고", "감면", "비과세", "세금", "기준"]):
+        score += 5
+    if cluster.get("domain") == LOAN_DOMAIN and any(word in title for word in ["한도", "금리", "대출", "DSR", "LTV", "상환", "심사"]):
         score += 5
     return min(score, 100)
 
@@ -524,6 +586,8 @@ def iter_cluster_candidates(domain: str = DEFAULT_DOMAIN) -> list[dict[str, Any]
                 outline = _build_auction_outline(cluster)
             elif domain == TAX_DOMAIN:
                 outline = _build_tax_outline(cluster)
+            elif domain == LOAN_DOMAIN:
+                outline = _build_loan_outline(cluster)
             else:
                 outline = _build_outline(cluster)
             cluster["outline_json"] = json.dumps(outline, ensure_ascii=False)

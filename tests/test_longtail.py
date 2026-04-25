@@ -139,6 +139,21 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("홈택스", " ".join(prompt["prompt_json"]["user"]["writing_rules"]))
         self.assertIn("wetax.go.kr", prompt["policy_json"]["keyword_sources"])
 
+    def test_replenish_loan_domain_generates_loan_prompts(self) -> None:
+        result = replenish_queue(self.db_path, min_queued=60, variants_per_cluster=3, domain="loan")
+        self.assertEqual(result["domain"], "loan")
+        self.assertGreaterEqual(result["queued"], 60)
+        rows = list_variants(self.db_path, status="queued", limit=20, domain="loan")
+        self.assertTrue(rows)
+        self.assertTrue(all(row["domain"] == "loan" for row in rows))
+        prompt = get_prompt(self.db_path, variant_id=rows[0]["id"])
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt["domain"], "loan")
+        self.assertIn("부동산 대출", prompt["prompt_json"]["system"])
+        self.assertNotIn("청약 전문", prompt["prompt_json"]["system"])
+        self.assertIn("은행 상담", " ".join(prompt["prompt_json"]["user"]["writing_rules"]))
+        self.assertIn("fss.or.kr", prompt["policy_json"]["keyword_sources"])
+
     def test_prompt_contains_required_sections(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
         rows = list_variants(self.db_path, status="queued", limit=1)
