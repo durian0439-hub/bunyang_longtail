@@ -94,11 +94,28 @@ THUMBNAIL_CHIPS = {
     "generic": ["핵심 조건 먼저", "일정과 자금 점검", "공고문 최종 확인"],
 }
 
+NAVER_TAG_LIMIT = 30
+
 DEFAULT_TAGS = [
     "청약",
     "분양청약",
+    "아파트청약",
+    "청약정보",
     "청약전략",
     "청약체크리스트",
+    "청약가이드",
+    "청약준비",
+    "청약초보",
+    "청약홈",
+    "분양정보",
+    "분양가이드",
+    "아파트분양",
+    "내집마련",
+    "무주택자청약",
+    "입주자모집공고",
+    "일반공급",
+    "특별공급",
+    "청약통장",
     "부동산정보",
 ]
 
@@ -106,8 +123,23 @@ AUCTION_DEFAULT_TAGS = [
     "경매",
     "부동산경매",
     "법원경매",
-    "경매권리분석",
+    "법원경매정보",
+    "경매정보",
+    "경매공부",
+    "경매초보",
+    "경매입찰",
     "경매체크리스트",
+    "경매권리분석",
+    "아파트경매",
+    "주택경매",
+    "매각물건명세서",
+    "등기부등본",
+    "현황조사서",
+    "입찰보증금",
+    "낙찰",
+    "낙찰후절차",
+    "잔금납부",
+    "명도",
     "부동산정보",
 ]
 
@@ -2155,30 +2187,33 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
 
 def default_tags(title: str, *, domain: str | None = None) -> list[str]:
     content_domain = _content_domain(title, domain)
+    text = _clean(title)
     if content_domain == "auction":
         tags = list(AUCTION_DEFAULT_TAGS)
-        text = _clean(title)
-        if any(token in text for token in ["말소기준권리", "권리분석", "근저당", "가압류", "가처분"]):
-            tags.extend(["말소기준권리", "권리분석", "등기부등본"])
-        elif any(token in text for token in ["임차인", "대항력", "배당", "보증금"]):
-            tags.extend(["선순위임차인", "대항력", "배당요구"])
-        elif any(token in text for token in ["명도", "인도명령", "점유"]):
-            tags.extend(["명도", "인도명령", "점유자"])
-        elif any(token in text for token in ["대출", "잔금", "취득세", "수리비"]):
-            tags.extend(["경락잔금대출", "잔금납부", "경매비용"])
-        else:
-            tags.extend(["경매입찰", "경매공부"])
+        if any(token in text for token in ["말소기준권리", "권리분석", "근저당", "가압류", "가처분", "등기부"]):
+            tags.extend(["말소기준권리", "권리분석", "근저당", "가압류", "가처분", "등기부등본확인", "특수권리"])
+        if any(token in text for token in ["임차인", "대항력", "배당", "보증금", "확정일자"]):
+            tags.extend(["선순위임차인", "대항력", "확정일자", "배당요구", "임차인배당", "보증금인수"])
+        if any(token in text for token in ["명도", "인도명령", "점유"]):
+            tags.extend(["명도", "인도명령", "점유자", "점유이전금지가처분", "명도소송"])
+        if any(token in text for token in ["대출", "잔금", "취득세", "수리비", "자금", "비용"]):
+            tags.extend(["경락잔금대출", "경매비용", "취득세", "수리비", "체납관리비", "낙찰가율", "입찰가계산"])
+        tags.extend(["경매서류", "경매물건검색", "경매리스크", "부동산경매입찰", "경매실전", "부동산투자", "경매시세", "경매사건번호", "경매감정가", "경매최저가", "경매유찰"])
     else:
         tags = list(DEFAULT_TAGS)
         topic = _topic_kind(title)
         if topic == "ranking":
-            tags.extend(["1순위조건", "일반공급", "특별공급", "30대맞벌이청약"])
+            tags.extend(["1순위조건", "청약1순위", "청약가점", "가점제", "추첨제", "당해지역", "예치금", "무주택세대구성원", "30대청약", "맞벌이청약"])
         elif topic == "institution":
-            tags.extend(["기관추천특별공급", "노부모부양", "특별공급자격", "무주택판정"])
+            tags.extend(["기관추천특별공급", "노부모부양", "특별공급자격", "무주택판정", "소득기준", "자산기준", "추천기관", "부적격주의"])
         elif topic == "cashflow":
-            tags.extend(["분양계약금", "중도금대출", "분양자금계획", "분양취득세", "청약준비"])
+            tags.extend(["분양계약금", "중도금대출", "잔금대출", "분양잔금", "분양자금계획", "분양취득세", "옵션비", "현금흐름", "월상환액", "대출한도"])
         else:
-            tags.extend(["청약정보", "분양가이드"])
+            tags.extend(["청약조건", "청약자격", "청약일정", "무주택", "거주요건", "소득기준", "자산기준", "부적격주의", "분양계약", "분양체크리스트"])
+        if any(token in text for token in ["재당첨", "전매", "거주의무", "규제지역", "주택수"]):
+            tags.extend(["재당첨제한", "전매제한", "거주의무", "규제지역청약", "주택수판정"])
+        if any(token in text for token in ["무순위", "잔여세대", "줍줍", "미분양"]):
+            tags.extend(["무순위청약", "잔여세대", "줍줍", "미분양", "청약대안"])
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -2188,7 +2223,7 @@ def default_tags(title: str, *, domain: str | None = None) -> list[str]:
             continue
         seen.add(cleaned)
         ordered.append(cleaned)
-    return ordered[:10]
+    return ordered[:NAVER_TAG_LIMIT]
 
 
 def _emphasize_publish_text(line: str) -> str:

@@ -644,6 +644,26 @@ Q1. 바로 신청해도 되나요?
         self.assertNotIn("다음 글부터 관련 글이 자동으로 연결됩니다", markdown)
         self.assertNotIn("관련 글\n-", markdown)
 
+    def test_default_tags_expands_cheongyak_and_auction_to_naver_limit(self) -> None:
+        cheongyak_tags = target.default_tags(
+            "분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+            domain="cheongyak",
+        )
+        auction_tags = target.default_tags(
+            "경매 권리분석과 말소기준권리, 잔금 대출까지 입찰 전 점검",
+            domain="auction",
+        )
+
+        self.assertEqual(len(cheongyak_tags), target.NAVER_TAG_LIMIT)
+        self.assertEqual(len(auction_tags), target.NAVER_TAG_LIMIT)
+        self.assertEqual(len(cheongyak_tags), len(set(cheongyak_tags)))
+        self.assertEqual(len(auction_tags), len(set(auction_tags)))
+        self.assertIn("분양계약금", cheongyak_tags)
+        self.assertIn("중도금대출", cheongyak_tags)
+        self.assertIn("말소기준권리", auction_tags)
+        self.assertIn("경락잔금대출", auction_tags)
+        self.assertTrue(all(" " not in tag for tag in cheongyak_tags + auction_tags))
+
     def test_build_publish_bundle_falls_back_to_local_when_gpt_image_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(
             target,
