@@ -527,7 +527,21 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
     for section in outline:
         heading = section.get("heading") or section.get("title") or "섹션"
         focus = section.get("focus") or section.get("body") or ""
+        if not focus and section.get("points"):
+            focus = ", ".join(str(item) for item in section.get("points") or [])
         outline_lines.append(f"- {heading}: {focus}".strip())
+    content_format = user_prompt.get("content_format") or {}
+    content_format_lines: list[str] = []
+    if isinstance(content_format, dict):
+        if content_format.get("name"):
+            content_format_lines.append(f"- 형식명: {content_format['name']}")
+        if content_format.get("purpose"):
+            content_format_lines.append(f"- 목적: {content_format['purpose']}")
+        for item in content_format.get("section_role") or []:
+            content_format_lines.append(f"- {item}")
+        avoid_items = list(content_format.get("avoid") or [])
+        if avoid_items:
+            content_format_lines.append("- 피해야 할 형식: " + ", ".join(str(item) for item in avoid_items))
     writing_rules = user_prompt.get("writing_rules", [])
     rule_lines = [f"- {item}" for item in writing_rules]
     required_sections = user_prompt.get("required_sections", [])
@@ -560,6 +574,9 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             f"서술 각도: {user_prompt.get('angle', '')}",
             f"각도 규칙: {user_prompt.get('angle_rule', '')}",
             "",
+            "글 형식:",
+            *content_format_lines,
+            "",
             "반드시 포함할 섹션:",
             *required_lines,
             "",
@@ -571,7 +588,9 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             "",
             "출력 형식:",
             "- 첫 줄은 H1 제목",
+            "- 도입부는 2문단 이내로 짧게 작성",
             "- 상단 요약 3문장",
+            "- 본문은 정보 전달형 블로그 글처럼 섹션별로 확인 순서와 판단 기준을 분명히 작성",
             "- FAQ 6개 이상",
             "- 마지막은 어떤 독자에게 더 적합한지 행동 가이드 1문장",
         ]

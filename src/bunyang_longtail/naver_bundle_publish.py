@@ -67,12 +67,22 @@ TOPIC_PUBLISH_HEADING_OVERRIDES = {
         "체크리스트": "분양 계약 전 체크리스트",
         "FAQ": "분양 계약금 FAQ",
     },
+    "auction": {
+        "이 글에서 바로 답하는 질문": "입찰 전 먼저 확인할 것",
+        "핵심 조건 정리": "경매 핵심 판단 기준",
+        "헷갈리기 쉬운 예외": "초보가 자주 놓치는 경매 리스크",
+        "실전 예시 시나리오": "입찰 가능·보류·회피 사례",
+        "체크리스트": "경매 입찰 전 체크리스트",
+        "FAQ": "경매 초보 FAQ",
+        "마무리 결론": "최종 입찰 판단",
+    },
 }
 
 TOPIC_COLORS = {
     "ranking": {"accent": "#2563EB", "soft": "#EFF6FF", "bg": "#EAF4FF"},
     "institution": {"accent": "#0F766E", "soft": "#ECFDF5", "bg": "#ECFDF5"},
     "cashflow": {"accent": "#EA580C", "soft": "#FFF7ED", "bg": "#FFF7ED"},
+    "auction": {"accent": "#B45309", "soft": "#FEF3C7", "bg": "#FFF7ED"},
     "generic": {"accent": "#4338CA", "soft": "#EEF2FF", "bg": "#EEF2FF"},
 }
 
@@ -80,6 +90,7 @@ THUMBNAIL_CHIPS = {
     "ranking": ["통장·거주요건", "특별공급 소득", "세대 기준 확인"],
     "institution": ["배우자 이력 구분", "세대 무주택 확인", "추천기관 기준 확인"],
     "cashflow": ["계약금 6천만원", "옵션비·취득세", "잔금 현금 확인"],
+    "auction": ["권리·점유 확인", "입찰가 상한", "잔금·명도 점검"],
     "generic": ["핵심 조건 먼저", "일정과 자금 점검", "공고문 최종 확인"],
 }
 
@@ -189,6 +200,8 @@ def _content_domain(title: str, explicit_domain: str | None = None) -> str:
 
 def _topic_kind(title: str) -> str:
     text = _clean(_strip_heading_markers(title))
+    if _content_domain(text) == "auction":
+        return "auction"
     if "1순위 조건" in text and "맞벌이" in text:
         return "ranking"
     if "기관추천 특별공급" in text and "노부모" in text:
@@ -228,6 +241,18 @@ def _normalize_section_lines(lines: list[str]) -> list[str]:
     return normalized
 
 
+def _canonical_raw_heading(line: str) -> str | None:
+    normalized = _clean(_strip_heading_markers(line)).rstrip(":：-–— ")
+    for heading in RAW_SECTION_ORDER:
+        if normalized == heading:
+            return heading
+        if normalized.startswith(f"{heading}:") or normalized.startswith(f"{heading}："):
+            return heading
+        if normalized.startswith(f"{heading} -") or normalized.startswith(f"{heading} –") or normalized.startswith(f"{heading} —"):
+            return heading
+    return None
+
+
 def _split_article(article_markdown: str) -> tuple[str, dict[str, list[str]]]:
     lines = [line.rstrip() for line in str(article_markdown or "").splitlines()]
     filtered = [line for line in lines]
@@ -237,9 +262,9 @@ def _split_article(article_markdown: str) -> tuple[str, dict[str, list[str]]]:
 
     for raw_line in filtered[1:]:
         line = raw_line.strip()
-        normalized_heading = _strip_heading_markers(line)
-        if normalized_heading in RAW_SECTION_ORDER:
-            current_heading = normalized_heading
+        canonical_heading = _canonical_raw_heading(line)
+        if canonical_heading:
+            current_heading = canonical_heading
             continue
         if current_heading is None:
             continue
@@ -254,11 +279,79 @@ def _section_count(article_markdown: str) -> int:
 
 
 def _needs_article_expansion(article_markdown: str) -> bool:
-    return len(_clean(article_markdown)) < 1400 or _section_count(article_markdown) < 6
+    cleaned_len = len(_clean(article_markdown))
+    if cleaned_len < 700:
+        return True
+    return cleaned_len < 1400 and _section_count(article_markdown) < 6
 
 
-def _synthesize_article_for_publish(title: str) -> str:
-    normalized_title = _clean(_strip_heading_markers(title)) or "분양청약 how to"
+def _synthesize_article_for_publish(title: str, *, domain: str | None = None) -> str:
+    content_domain = _content_domain(title, domain)
+    normalized_title = _clean(_strip_heading_markers(title)) or ("부동산 경매 how to" if content_domain == "auction" else "분양청약 how to")
+
+    if content_domain == "auction":
+        return f"""{normalized_title}
+상단 요약
+
+경매초보라면 입찰 전 좋은 물건을 찾기보다 피해야 할 리스크를 먼저 걸러야 합니다. 권리관계, 점유 상태, 자금 계획 중 하나라도 설명이 안 되면 바로 입찰보다 보류가 안전합니다.
+
+법원경매정보의 사건 기본값을 확인한 뒤 매각물건명세서, 현황조사서, 감정평가서, 등기부등본, 전입세대열람을 순서대로 맞춰 보셔야 합니다. 마지막에는 입찰보증금, 잔금, 취득세, 명도 비용까지 현금 흐름으로 계산해야 합니다.
+
+이 글에서 바로 답하는 질문
+
+경매초보가 입찰 전에 무엇부터 확인해야 하는가
+법원경매정보와 매각물건명세서를 어떤 순서로 봐야 하는가
+권리분석, 점유, 잔금 리스크 중 어디서 손실이 커지는가
+입찰 가능, 보류, 회피를 어떻게 나눠야 하는가
+
+핵심 조건 정리
+
+경매 체크리스트는 가격이 싸 보이는 물건을 고르는 표가 아니라 입찰하면 안 되는 물건을 먼저 제외하는 필터입니다. 처음에는 아래 순서로 보시면 판단이 덜 흔들립니다.
+- 법원경매정보에서 사건번호, 매각기일, 최저가, 보증금을 확인합니다.
+- 매각물건명세서에서 인수될 수 있는 권리와 임차인 정보를 봅니다.
+- 현황조사서와 전입세대열람으로 실제 점유 상태를 맞춰 봅니다.
+- 등기부등본으로 말소기준권리와 후순위 권리를 확인합니다.
+- 대출 가능액, 잔금 납부기한, 취득세, 명도 비용을 현금표에 넣습니다.
+
+헷갈리기 쉬운 예외
+
+유찰이 많다고 무조건 기회는 아닙니다. 권리 인수, 점유 갈등, 대출 제한, 수리비 때문에 낮아진 가격일 수 있습니다.
+
+임차인이 있다고 모두 위험한 것도 아닙니다. 핵심은 임차인 유무가 아니라 낙찰자가 인수할 보증금이나 추가 비용이 남는지입니다.
+
+명도는 법적 절차만으로 끝나지 않을 수 있습니다. 협의 비용, 인도명령, 강제집행 가능성까지 시간을 잡아야 합니다.
+
+실전 예시 시나리오
+
+최저가가 시세보다 낮은 아파트라도 선순위 임차인 보증금이 남거나 점유자가 협조하지 않을 가능성이 크면 초보자는 보류가 맞습니다. 반대로 권리 인수 위험이 낮고 잔금대출과 명도 비용까지 계산이 끝난 물건이라면 입찰가 상한을 정한 뒤 접근할 수 있습니다.
+
+체크리스트
+
+법원경매정보에서 사건번호, 매각기일, 보증금을 확인했는가
+매각물건명세서에서 인수 권리와 임차인 정보를 확인했는가
+현황조사서와 전입세대열람으로 점유 상태를 맞춰 봤는가
+등기부등본에서 말소기준권리보다 앞선 권리를 확인했는가
+입찰가 상한, 잔금대출, 취득세, 명도 비용을 한 번에 계산했는가
+현장 방문이나 주변 시세 확인 없이 가격만 보고 판단하지 않았는가
+
+FAQ
+
+Q1. 경매초보는 무엇부터 봐야 하나요?
+A. 가격보다 법원경매정보, 매각물건명세서, 점유 상태, 자금 계획 순서로 보시는 것이 안전합니다.
+
+Q2. 유찰이 많으면 좋은 물건인가요?
+A. 아닐 수 있습니다. 왜 유찰됐는지 권리관계와 점유, 대출 가능성까지 확인하셔야 합니다.
+
+Q3. 권리분석이 어려우면 입찰해도 되나요?
+A. 설명이 안 되는 권리가 있으면 보류하는 편이 낫습니다. 초보자는 모르는 리스크를 가격으로 보상받기 어렵습니다.
+
+Q4. 최종 확인은 어디서 해야 하나요?
+A. 법원경매정보와 사건 서류를 기본으로 보고, 필요하면 등기부등본, 전입세대열람, 대출 상담, 현장 확인까지 맞춰 보셔야 합니다.
+
+마무리 결론
+
+경매초보에게 첫 목표는 낙찰이 아니라 손실을 피하는 것입니다. 입찰 전에는 권리, 점유, 자금, 명도 리스크를 한 장 체크리스트로 정리하고 하나라도 설명이 안 되면 보류하는 기준을 먼저 세우셔야 합니다.
+"""
 
     if "기관추천 특별공급" in normalized_title and "노부모 부양" in normalized_title:
         return f"""{normalized_title}
@@ -461,10 +554,10 @@ A. 입주자모집공고와 청약홈에서 최종 확인하시는 것이 안전
 """
 
 
-def _prepare_article_for_publish(*, title: str, article_markdown: str) -> str:
+def _prepare_article_for_publish(*, title: str, article_markdown: str, domain: str | None = None) -> str:
     if not _needs_article_expansion(article_markdown):
         return article_markdown
-    return _synthesize_article_for_publish(title)
+    return _synthesize_article_for_publish(title, domain=domain)
 
 
 def parse_publish_sections(article_markdown: str, *, title_hint: str | None = None) -> tuple[str, list[PublishSection]]:
@@ -506,14 +599,19 @@ def build_publish_title(original_title: str) -> str:
     return title[:60].rstrip()
 
 
-def _intro_text(sections: list[PublishSection]) -> str:
+def _intro_text(sections: list[PublishSection], *, domain: str | None = None) -> str:
+    fallback = (
+        "오늘은 경매 입찰 전 권리, 점유, 자금 리스크를 어떤 순서로 확인해야 하는지 빠르게 정리해보겠습니다."
+        if domain == "auction"
+        else "오늘은 분양청약 판단이 헷갈릴 때 어떻게 순서를 잡아야 하는지 빠르게 정리해보겠습니다."
+    )
     if not sections:
-        return "오늘은 분양청약 판단이 헷갈릴 때 어떻게 순서를 잡아야 하는지 빠르게 정리해보겠습니다."
+        return fallback
     source = _summary_source(sections[0].publish_heading, "", article_markdown="\n".join(sections[0].lines))
     text = _clean(source).replace("...", "").replace("…", "")
     if text:
         return text
-    return "오늘은 분양청약 판단이 헷갈릴 때 어떻게 순서를 잡아야 하는지 빠르게 정리해보겠습니다."
+    return fallback
 
 
 def _font(size: int):
@@ -623,10 +721,11 @@ def _draw_thumbnail_icon(draw: ImageDraw.ImageDraw, *, kind: str, accent: str) -
     draw.line((944, 369, 972, 330), fill="white", width=8)
 
 
-def render_thumbnail_image(*, title: str, sections: list[PublishSection], output_path: str | Path) -> str:
+def render_thumbnail_image(*, title: str, sections: list[PublishSection], output_path: str | Path, domain: str | None = None) -> str:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    content_domain = _content_domain(title, domain)
     kind = _topic_kind(title)
     palette = _topic_palette(title)
     accent = palette["accent"]
@@ -658,7 +757,8 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
         "ranking": "청약 1순위",
         "institution": "특별공급",
         "cashflow": "분양 자금",
-    }.get(kind, "분양청약")
+        "auction": "경매 입찰",
+    }.get(kind, "경매" if content_domain == "auction" else "분양청약")
     draw.rounded_rectangle((88, 88, 286, 142), radius=22, fill="#0F172A")
     draw.text((187, 115), badge_text, fill="white", font=_font(30), anchor="mm")
 
@@ -668,7 +768,7 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
         draw.text((92, y), line, fill="#0F172A" if idx < len(title_lines) - 1 else accent, font=_font(60))
         y += 76
 
-    summary_lines = _fit_lines(draw, _intro_text(sections), max_width=540, font_size=30, max_lines=3)
+    summary_lines = _fit_lines(draw, _intro_text(sections, domain=content_domain), max_width=540, font_size=30, max_lines=3)
     draw.rounded_rectangle((92, 462, 630, 618), radius=28, fill=soft, outline="#DCE7F6", width=2)
     sy = 494
     for line in summary_lines:
@@ -688,7 +788,12 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
         draw.multiline_text((x1 + 93, chip_y + 28), chip_text, fill=accent, font=_font(24), anchor="mm", align="center", spacing=2)
 
     draw.rounded_rectangle((92, 838, 988, 928), radius=26, fill=soft, outline="#DCE7F6", width=2)
-    draw.text((540, 883), "표 중심 본문, 최종 자격과 일정은 공고문과 청약홈으로 확인", fill="#334155", font=_font(27), anchor="mm")
+    footer_text = (
+        "최종 확인은 법원경매정보와 사건 서류·현장 점검으로 확인"
+        if content_domain == "auction"
+        else "표 중심 본문, 최종 자격과 일정은 공고문과 청약홈으로 확인"
+    )
+    draw.text((540, 883), footer_text, fill="#334155", font=_font(27), anchor="mm")
 
     image.save(output)
     return str(output)
@@ -948,7 +1053,12 @@ def render_table_image(*, title: str, label: str, headers: list[str], rows: list
             break
 
     draw.rounded_rectangle((84, 950, 996, 998), radius=18, fill="#0F2E23", outline=chalk_mint, width=2)
-    draw.text((540, 974), "숫자와 자격은 최종 공고문 기준으로 다시 확인", fill=chalk_yellow, font=_font(24), anchor="mm")
+    footer_text = (
+        "권리와 점유는 법원 서류와 현장 기준으로 다시 확인"
+        if _content_domain(title) == "auction"
+        else "숫자와 자격은 최종 공고문 기준으로 다시 확인"
+    )
+    draw.text((540, 974), footer_text, fill=chalk_yellow, font=_font(24), anchor="mm")
 
     image.save(output)
     return str(output)
@@ -1082,6 +1192,35 @@ def _table_specs(title: str, sections: list[PublishSection]) -> list[dict[str, A
             },
         ]
 
+    if kind == "auction":
+        checklist_rows = _simple_rows_from_lines((checklist_section.lines if checklist_section else []), limit=5)
+        return [
+            {
+                "slot": key_slot,
+                "file_name": "01_auction_risk_table.png",
+                "label": "경매 입찰 전 리스크 판단표",
+                "headers": ["확인 항목", "먼저 볼 것", "주의 포인트"],
+                "rows": [
+                    ["권리", "매각물건명세서·등기부등본", "인수 권리와 말소기준권리 확인"],
+                    ["점유", "현황조사서·전입세대열람", "명도 시간과 비용 예상"],
+                    ["자금", "보증금·잔금·대출 상담", "잔금 공백과 취득세 반영"],
+                    ["가격", "실거래·낙찰가율·수리비", "입찰가 상한을 먼저 고정"],
+                ],
+            },
+            {
+                "slot": checklist_slot,
+                "file_name": "02_auction_checklist_table.png",
+                "label": "경매 입찰 전 체크리스트",
+                "headers": ["순서", "확인 항목"],
+                "rows": [[str(idx + 1), item] for idx, item in enumerate(checklist_rows or [
+                    "법원경매정보에서 사건번호와 매각기일 확인하기",
+                    "매각물건명세서로 인수 권리 확인하기",
+                    "현황조사서와 전입세대열람으로 점유 상태 맞추기",
+                    "잔금대출, 취득세, 명도 비용까지 현금표에 넣기",
+                ])],
+            },
+        ]
+
     fallback_rows = _simple_rows_from_lines((checklist_section.lines if checklist_section else []), limit=4)
     return [
         {
@@ -1161,6 +1300,8 @@ def _topic_visual_style(title: str) -> str:
         return "가족 구성과 주택 이력을 서류로 검토하는 장면, 차분한 청록 계열, 상담형 인포그래픽 톤"
     if kind == "cashflow":
         return "분양 자금 계획표와 계약 일정을 함께 보는 장면, 따뜻한 주황 계열, 실용적인 재무 인포그래픽 톤"
+    if kind == "auction":
+        return "법원경매정보와 사건 서류, 체크리스트를 함께 보는 장면, 따뜻한 브라운 계열, 실전형 경매 인포그래픽 톤"
     return "한국 부동산 정보 블로그에 맞는 깔끔한 인포그래픽 톤"
 
 
@@ -1429,6 +1570,9 @@ def _render_gpt_publish_assets(
 
     for index, plan in enumerate(plans, start=1):
         output_path = output_root / f"{index:02d}_{plan.kind}.png"
+        if output_path.exists() and output_path.stat().st_size > 100_000 and not _is_visually_blank_publish_image(output_path):
+            assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=str(output_path.resolve())))
+            continue
         cmd = [
             sys.executable,
             str(ROOT / "scripts" / "generate_publish_image.py"),
@@ -1441,24 +1585,30 @@ def _render_gpt_publish_assets(
             "--output-path", str(output_path),
             "--artifact-root", str(Path("/home/kj/app/bunyang_longtail/dev/data/gpt_web_artifacts") / "naver_publish"),
         ]
-        timeout_seconds = 420
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, timeout={timeout_seconds}s") from exc
-        if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "").strip()
-            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, {detail}")
-        try:
-            execution = json.loads(proc.stdout)
-        except Exception as exc:
-            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, invalid json response") from exc
-        resolved_path = str(Path(execution["file_path"]).resolve())
-        if _is_visually_blank_publish_image(resolved_path):
-            raise RuntimeError(
-                f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, 흰색에 가까운 빈 이미지로 판정됨 ({resolved_path})"
-            )
-        assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=resolved_path))
+        timeout_seconds = 900
+        last_detail = ""
+        for attempt in range(1, 3):
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                last_detail = f"timeout={timeout_seconds}s, attempt={attempt}"
+                continue
+            if proc.returncode != 0:
+                last_detail = (proc.stderr or proc.stdout or "").strip()
+                continue
+            try:
+                execution = json.loads(proc.stdout)
+            except Exception:
+                last_detail = "invalid json response"
+                continue
+            resolved_path = str(Path(execution["file_path"]).resolve())
+            if _is_visually_blank_publish_image(resolved_path):
+                last_detail = f"흰색에 가까운 빈 이미지로 판정됨 ({resolved_path})"
+                continue
+            assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=resolved_path))
+            break
+        else:
+            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, {last_detail}")
     return assets
 
 
@@ -1507,12 +1657,13 @@ def _render_publish_assets_local(
     sections: list[PublishSection],
     output_dir: str | Path,
     inline_table_specs: list[dict[str, Any]] | None = None,
+    domain: str | None = None,
 ) -> list[PublishAsset]:
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
     assets: list[PublishAsset] = []
-    thumbnail_path = render_thumbnail_image(title=title, sections=sections, output_path=output_root / "00_thumbnail.png")
+    thumbnail_path = render_thumbnail_image(title=title, sections=sections, output_path=output_root / "00_thumbnail.png", domain=domain)
     assets.append(PublishAsset(slot="lead", kind="thumbnail", label="썸네일", path=str(Path(thumbnail_path).resolve())))
 
     topic = _topic_kind(title)
@@ -1635,6 +1786,7 @@ def _render_publish_assets_result(
     output_dir: str | Path,
     image_provider: str = "local",
     inline_table_specs: list[dict[str, Any]] | None = None,
+    domain: str | None = None,
 ) -> PublishAssetRenderResult:
     requested_provider = _clean(image_provider or "local").lower() or "local"
     resolved_provider = _resolve_publish_image_provider(image_provider)
@@ -1645,6 +1797,7 @@ def _render_publish_assets_result(
                 sections=sections,
                 output_dir=output_dir,
                 inline_table_specs=inline_table_specs,
+                domain=domain,
             ),
             image_provider="local",
             image_provider_requested=requested_provider,
@@ -1669,6 +1822,7 @@ def _render_publish_assets_result(
             sections=sections,
             output_dir=output_dir,
             inline_table_specs=inline_table_specs,
+            domain=domain,
         )
         return PublishAssetRenderResult(
             assets=fallback_assets,
@@ -1853,7 +2007,9 @@ def _section_lines_for_publish(title: str, section: PublishSection) -> list[str]
             previous_blank = True
             continue
         if section.raw_heading in {"이 글에서 바로 답하는 질문", "체크리스트"} and not line.startswith(("- ", "Q")) and not _inline_table_marker_id(line):
-            out.append(f"- {line}")
+            out.append(f"- {_strip_heading_markers(line)}")
+        elif section.raw_heading == "체크리스트" and line.startswith("- "):
+            out.append(f"- {_strip_heading_markers(line[2:].strip())}")
         else:
             out.append(line)
         previous_blank = False
@@ -1864,8 +2020,15 @@ def _section_lines_for_publish(title: str, section: PublishSection) -> list[str]
     return out
 
 
-def _lead_blocks(title: str, sections: list[PublishSection]) -> list[str]:
+def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | None = None) -> list[str]:
+    content_domain = _content_domain(title, domain)
     topic = _topic_kind(title)
+    if content_domain == "auction":
+        return [
+            "경매 입찰 판단은 싼 가격보다 권리·점유·자금 리스크를 먼저 걸러내는 것이 핵심입니다.",
+            "",
+            _intro_text(sections, domain="auction"),
+        ]
     if topic == "cashflow":
         return [
             "분양가 6억원이면 계약금 6천만원으로 끝나지 않습니다. 옵션비와 취득세, 잔금 시점 현금까지 같이 보면 실제 준비금이 더 커집니다.",
@@ -1887,20 +2050,26 @@ def _lead_blocks(title: str, sections: list[PublishSection]) -> list[str]:
     return [
         "청약 판단을 빨리 끝내려면 조건을 한 줄씩 분리해서 보셔야 합니다.",
         "",
-        _intro_text(sections),
+        _intro_text(sections, domain=content_domain),
     ]
 
 
 BOOK_LINK_URL = "https://link.coupang.com/a/esfszm"
+AUCTION_BOOK_LINK_URL = "https://link.coupang.com/a/espLX0"
 BOOK_NOTICE_TEXT = '"이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."'
 
 
-def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dict[str, str]] | None = None) -> None:
+def _book_link_url_for_domain(domain: str | None = None) -> str:
+    return AUCTION_BOOK_LINK_URL if _content_domain("", domain) == "auction" else BOOK_LINK_URL
+
+
+def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> None:
     lines.append("---")
     lines.append("")
     lines.append(BOOK_NOTICE_TEXT)
-    if BOOK_LINK_URL:
-        lines.append(BOOK_LINK_URL)
+    book_link_url = _book_link_url_for_domain(domain)
+    if book_link_url:
+        lines.append(book_link_url)
     lines.append("")
     lines.append("관련 글")
     if related_links:
@@ -1913,6 +2082,16 @@ def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dic
     else:
         lines.append("- 다음 글부터 관련 글이 자동으로 연결됩니다.")
     lines.append("")
+
+
+def _validate_domain_publish_markdown(markdown: str, *, domain: str | None = None) -> None:
+    content_domain = _content_domain("", domain)
+    if content_domain != "auction":
+        return
+    forbidden_terms = ["청약홈", "입주자모집공고", "분양청약"]
+    found = [term for term in forbidden_terms if term in str(markdown or "")]
+    if found:
+        raise ValueError(f"경매 발행 본문에 청약 도메인 용어가 섞였습니다: {', '.join(found)}")
 
 
 def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset], related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> str:
@@ -1929,7 +2108,7 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
         lines.append(f"[[IMAGE:{image_index}]]")
         lines.append("")
 
-    lines.extend(_lead_blocks(title, sections))
+    lines.extend(_lead_blocks(title, sections, domain=domain))
     lines.append("")
 
     for image_index in slot_to_indexes.get("intro", []):
@@ -1956,7 +2135,7 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
     else:
         lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
     lines.append("")
-    _append_book_and_related_blocks(lines, related_links=related_links)
+    _append_book_and_related_blocks(lines, related_links=related_links, domain=_content_domain(title, domain))
     return "\n".join(lines).strip() + "\n"
 
 
@@ -2060,9 +2239,12 @@ def build_publish_bundle(
     related_links: list[dict[str, str]] | None = None,
     domain: str | None = None,
 ) -> PublishBundle:
-    prepared_article = _prepare_article_for_publish(title=variant_title, article_markdown=article_markdown)
+    publish_title = title_override or build_publish_title(variant_title)
+    content_domain = _content_domain(publish_title or variant_title, domain)
+    prepared_article = _prepare_article_for_publish(title=variant_title, article_markdown=article_markdown, domain=content_domain)
     original_title, sections = parse_publish_sections(prepared_article, title_hint=variant_title)
     publish_title = title_override or build_publish_title(variant_title or original_title)
+    content_domain = _content_domain(publish_title, content_domain)
     output_dir = Path(output_root).resolve()
     images_dir = output_dir / "images"
     sections, inline_table_specs = _extract_inline_markdown_table_specs(sections)
@@ -2072,14 +2254,15 @@ def build_publish_bundle(
         output_dir=images_dir,
         image_provider=image_provider,
         inline_table_specs=inline_table_specs,
+        domain=content_domain,
     )
     min_publish_side_px = int(str(os.getenv("NAVER_BLOG_MIN_IMAGE_SIDE_PX", "800")).strip() or "800")
     assets = [
         PublishAsset(slot=asset.slot, kind=asset.kind, label=asset.label, path=_ensure_publish_asset_min_side(asset.path, min_publish_side_px))
         for asset in asset_result.assets
     ]
-    content_domain = _content_domain(publish_title, domain)
     markdown = build_publish_markdown(title=publish_title, sections=sections, assets=assets, related_links=related_links, domain=content_domain)
+    _validate_domain_publish_markdown(markdown, domain=content_domain)
     body_html = markdown_to_html(markdown)
     tags = default_tags(publish_title, domain=content_domain)
     apt_id = f"longtail-bundle-{bundle_id}"
@@ -2183,6 +2366,10 @@ def _persist_publish_result(db_path: str | Path, article: dict[str, Any], result
     mark_published(db_path, int(article["variant_id"]), publish_url)
 
 
+def _requires_gpt_publish_images(image_provider: str) -> bool:
+    return _clean(image_provider).lower() in {"gpt_web", "openai_compat"}
+
+
 def publish_bundle_to_naver(
     *,
     db_path: str | Path,
@@ -2206,28 +2393,49 @@ def publish_bundle_to_naver(
         domain=article.get("domain"),
     )
 
+    if _requires_gpt_publish_images(image_provider) and publish_bundle.image_provider != _clean(image_provider).lower():
+        raise RuntimeError(
+            "GPT 이미지 생성이 실패해 로컬 fallback 이미지가 생성되었습니다. "
+            f"요청 provider={image_provider}, 실제 provider={publish_bundle.image_provider}, "
+            f"원인={publish_bundle.image_provider_fallback_reason or 'unknown'}"
+        )
+
     blog_root = Path("/home/kj/app/bunyang/blog-cheongyak-automation")
     if str(blog_root) not in sys.path:
         sys.path.insert(0, str(blog_root))
 
     from src.publisher.naver_playwright import publish as naver_publish
 
-    if category_no:
-        os.environ["NAVER_BLOG_CATEGORY_NO"] = str(category_no)
-    if category_name:
-        os.environ["NAVER_BLOG_CATEGORY_NAME"] = str(category_name)
+    env_overrides: dict[str, str | None] = {}
+    if category_no is not None:
+        env_overrides["NAVER_BLOG_CATEGORY_NO"] = str(category_no).strip() or None
+    if category_name is not None:
+        env_overrides["NAVER_BLOG_CATEGORY_NAME"] = str(category_name).strip() or None
+    previous_env = {key: os.environ.get(key) for key in env_overrides}
 
     out_dir = blog_root / "outputs" / "publish_longtail"
-    ok = naver_publish(
-        publish_bundle.apt_id,
-        publish_bundle.title,
-        publish_bundle.body_html,
-        publish_bundle.images,
-        mode=mode,
-        out=str(out_dir),
-        body_markdown=publish_bundle.markdown,
-        tags=publish_bundle.tags,
-    )
+    try:
+        for key, value in env_overrides.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        ok = naver_publish(
+            publish_bundle.apt_id,
+            publish_bundle.title,
+            publish_bundle.body_html,
+            publish_bundle.images,
+            mode=mode,
+            out=str(out_dir),
+            body_markdown=publish_bundle.markdown,
+            tags=publish_bundle.tags,
+        )
+    finally:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     result_path = out_dir / f"{publish_bundle.apt_id}.json"
     result = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else {}
     result["ok"] = ok
