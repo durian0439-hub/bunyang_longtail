@@ -12,7 +12,7 @@ from statistics import mean
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.getenv("BUNYANG_LONGTAIL_ROOT", Path(__file__).resolve().parents[2])).resolve()
 
 from .local_image_fallback import _pick_font_path, _summary_source
 
@@ -211,6 +211,8 @@ AUCTION_DEFAULT_TAGS = [
 ]
 
 PUBLISH_ENV_CANDIDATES = [
+    ROOT / ".env",
+    ROOT / ".env.local",
     Path("/home/kj/app/bunyang/blog-cheongyak-automation/.env"),
     Path("/home/kj/app/bunyang/blog-cheongyak-automation/.env.local"),
 ]

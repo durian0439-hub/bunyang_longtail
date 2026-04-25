@@ -14,13 +14,20 @@ export LONGTAIL_GPT_IMAGE_SPEED="${LONGTAIL_GPT_IMAGE_SPEED:-fast}"
 export NAVER_BLOG_GPT_IMAGE_MAX_ASSETS="${NAVER_BLOG_GPT_IMAGE_MAX_ASSETS:-11}"
 export NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC="${NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC:-480}"
 
-DEV_ROOT="/home/kj/app/bunyang_longtail/dev"
-PROD_ROOT="/home/kj/app/bunyang_longtail/prod"
-DB_PATH="$DEV_ROOT/data/cdp_probe5.sqlite3"
+PROD_ROOT="${LONGTAIL_PROD_ROOT:-/home/kj/app/bunyang_longtail/prod}"
+CODE_ROOT="${LONGTAIL_PROD_CODE_ROOT:-$PROD_ROOT/runtime/current}"
+DATA_DIR="${BUNYANG_LONGTAIL_DATA_DIR:-$CODE_ROOT/data}"
+DB_PATH="${LONGTAIL_PROD_DB_PATH:-$DATA_DIR/cdp_probe5.sqlite3}"
+OUTPUT_BASE="${LONGTAIL_NAVER_OUTPUT_BASE:-$DATA_DIR/naver_publish/cron_runs}"
 LOG_DIR="$PROD_ROOT/logs"
 RUN_DIR="$PROD_ROOT/run"
 LOCK_FILE="$RUN_DIR/longtail_publish.lock"
 LOG_FILE="$LOG_DIR/longtail_publish.log"
+
+export BUNYANG_LONGTAIL_ROOT="$CODE_ROOT"
+export BUNYANG_LONGTAIL_DATA_DIR="$DATA_DIR"
+export LONGTAIL_PROD_DB_PATH="$DB_PATH"
+export LONGTAIL_NAVER_OUTPUT_BASE="$OUTPUT_BASE"
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 
@@ -32,17 +39,25 @@ fi
 
 {
   echo "[$(date '+%F %T')] start: longtail publish prod"
+  echo "prod code root: $CODE_ROOT"
+  echo "prod data dir: $DATA_DIR"
 
-  cd "$DEV_ROOT"
+  if [[ ! -d "$CODE_ROOT/.git" ]]; then
+    echo "error: production code checkout is missing: $CODE_ROOT"
+    echo "hint: clone origin/main into $CODE_ROOT before running prod cron"
+    exit 1
+  fi
+
+  cd "$CODE_ROOT"
 
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
   if [[ "$current_branch" != "main" ]]; then
-    echo "error: longtail cron must run on main branch, current=$current_branch"
+    echo "error: longtail cron must run on prod main branch, current=$current_branch"
     exit 1
   fi
 
   if [[ -n "$(git status --porcelain)" ]]; then
-    echo "error: longtail cron requires a clean working tree before sync"
+    echo "error: longtail cron requires a clean production working tree before sync"
     git status --short
     exit 1
   fi
@@ -52,14 +67,21 @@ fi
   remote_rev="$(git rev-parse origin/main)"
   base_rev="$(git merge-base HEAD origin/main)"
   if [[ "$local_rev" == "$remote_rev" ]]; then
-    echo "git status: main already synced with origin/main"
+    echo "git status: prod main already synced with origin/main"
   elif [[ "$local_rev" == "$base_rev" ]]; then
     git merge --ff-only origin/main
   else
-    echo "error: local main is ahead of or diverged from origin/main; push/merge before cron execution"
+    echo "error: prod main is ahead of or diverged from origin/main; fix prod checkout before cron execution"
     echo "local=$local_rev remote=$remote_rev base=$base_rev"
     exit 1
   fi
+
+  if [[ ! -f "$DB_PATH" ]]; then
+    echo "error: production DB is missing: $DB_PATH"
+    exit 1
+  fi
+
+  mkdir -p "$OUTPUT_BASE"
 
   /usr/bin/python3 -m unittest tests.test_naver_bundle_publish tests.test_longtail
 
@@ -76,8 +98,8 @@ from bunyang_longtail.cron_publish import describe_unpublishable_run_result, run
 from bunyang_longtail.database import connect
 from bunyang_longtail.workers import run_bundle
 
-DB_PATH = 'data/cdp_probe5.sqlite3'
-OUTPUT_BASE = Path('data/naver_publish/cron_runs')
+DB_PATH = os.environ['LONGTAIL_PROD_DB_PATH']
+OUTPUT_BASE = Path(os.environ['LONGTAIL_NAVER_OUTPUT_BASE'])
 OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
 MAX_VARIANT_ATTEMPTS = 3
 

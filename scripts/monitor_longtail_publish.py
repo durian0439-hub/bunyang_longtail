@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-LOG_PATH = Path("/home/kj/app/bunyang_longtail/prod/logs/longtail_publish.log")
-STATE_PATH = Path("/home/kj/app/bunyang_longtail/prod/run/longtail_monitor_state.json")
-DB_PATH = Path("/home/kj/app/bunyang_longtail/dev/data/cdp_probe5.sqlite3")
-RUN_CMD = "/home/kj/app/bunyang_longtail/dev/scripts/run_longtail_publish_prod.sh"
-TARGET = "8272573727"
+PROD_ROOT = Path(os.getenv("LONGTAIL_PROD_ROOT", "/home/kj/app/bunyang_longtail/prod")).resolve()
+CODE_ROOT = Path(os.getenv("LONGTAIL_PROD_CODE_ROOT", PROD_ROOT / "runtime" / "current")).resolve()
+DATA_DIR = Path(os.getenv("BUNYANG_LONGTAIL_DATA_DIR", CODE_ROOT / "data")).resolve()
+LOG_PATH = Path(os.getenv("LONGTAIL_PUBLISH_LOG", PROD_ROOT / "logs" / "longtail_publish.log")).resolve()
+STATE_PATH = Path(os.getenv("LONGTAIL_MONITOR_STATE", PROD_ROOT / "run" / "longtail_monitor_state.json")).resolve()
+DB_PATH = Path(os.getenv("LONGTAIL_PROD_DB_PATH", DATA_DIR / "cdp_probe5.sqlite3")).resolve()
+RUN_CMD = os.getenv("LONGTAIL_RUN_CMD", str(CODE_ROOT / "scripts" / "run_longtail_publish_prod.sh"))
+TARGET = os.getenv("LONGTAIL_NOTIFY_TARGET", "8272573727")
 
 
 @dataclass

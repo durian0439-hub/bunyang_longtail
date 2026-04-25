@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DEV_ROOT = Path("/home/kj/app/bunyang_longtail/dev")
-DATA_DIR = DEV_ROOT / "data"
+PROJECT_ROOT = Path(os.getenv("BUNYANG_LONGTAIL_ROOT", Path(__file__).resolve().parents[2])).resolve()
+DEV_ROOT = PROJECT_ROOT  # backward-compatible name; not necessarily the dev checkout.
+DATA_DIR = Path(os.getenv("BUNYANG_LONGTAIL_DATA_DIR", PROJECT_ROOT / "data")).resolve()
 DEFAULT_DB_PATH = DATA_DIR / "longtail.sqlite3"
 DEFAULT_EXPORT_PATH = DATA_DIR / "queued_prompts.jsonl"
 GPT_PROFILE_DIR = DATA_DIR / "gpt_profiles"

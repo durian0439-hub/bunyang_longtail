@@ -9,7 +9,7 @@ from pathlib import Path
 from shutil import which
 from typing import Any
 
-from .config import GPT_PROFILE_DIR, GPT_WEB_ARTIFACT_DIR, ensure_data_dir
+from .config import GPT_PROFILE_DIR, GPT_WEB_ARTIFACT_DIR, PROJECT_ROOT, ensure_data_dir
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -72,8 +72,8 @@ IMAGE_SELECTORS = [
     'img[alt*="generated"]',
 ]
 GPT_WEB_ENV_CANDIDATES = [
-    Path("/home/kj/app/bunyang_longtail/dev/.env"),
-    Path("/home/kj/app/bunyang_longtail/dev/.env.local"),
+    PROJECT_ROOT / ".env",
+    PROJECT_ROOT / ".env.local",
     Path("/home/kj/app/bunyang/blog-cheongyak-automation/.env"),
     Path("/home/kj/app/bunyang/blog-cheongyak-automation/.env.local"),
 ]
