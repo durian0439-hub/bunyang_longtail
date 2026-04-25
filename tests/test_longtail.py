@@ -45,7 +45,7 @@ from bunyang_longtail.gpt_web import (
 )
 from bunyang_longtail.local_image_fallback import _summary_points, _summary_source, render_fallback_thumbnail
 from bunyang_longtail.openai_compat import OpenAICompatExecutionError, probe_openai_compat
-from bunyang_longtail.planner import export_prompts, get_prompt, list_variants, mark_published, replenish_queue, stats
+from bunyang_longtail.planner import _topic_scene, export_prompts, get_prompt, list_variants, mark_published, replenish_queue, stats
 from bunyang_longtail.workers import (
     complete_image_job,
     complete_text_job,
@@ -86,6 +86,10 @@ class LongtailPlannerTest(unittest.TestCase):
             self.assertIn("bundle_id", article_columns)
             self.assertIn("source_job_id", article_columns)
             self.assertIn("normalized_title_hash", article_columns)
+            cluster_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(topic_cluster)").fetchall()
+            }
+            self.assertIn("domain", cluster_columns)
             variant_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(topic_variant)").fetchall()
             }
@@ -102,6 +106,23 @@ class LongtailPlannerTest(unittest.TestCase):
         rows = list_variants(self.db_path, status="queued", limit=100)
         titles = [row["title"] for row in rows]
         self.assertEqual(len(titles), len(set(titles)))
+
+    def test_auction_title_scene_deduplicates_repeated_headword(self) -> None:
+        self.assertEqual(_topic_scene("경매 공부", "공부 순서를 잡을 때"), "경매 공부 순서를 잡을 때")
+
+    def test_replenish_auction_domain_generates_auction_prompts(self) -> None:
+        result = replenish_queue(self.db_path, min_queued=60, variants_per_cluster=3, domain="auction")
+        self.assertEqual(result["domain"], "auction")
+        self.assertGreaterEqual(result["queued"], 60)
+        rows = list_variants(self.db_path, status="queued", limit=20, domain="auction")
+        self.assertTrue(rows)
+        self.assertTrue(all(row["domain"] == "auction" for row in rows))
+        prompt = get_prompt(self.db_path, variant_id=rows[0]["id"])
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt["domain"], "auction")
+        self.assertIn("경매", prompt["prompt_json"]["system"])
+        self.assertNotIn("청약 전문", prompt["prompt_json"]["system"])
+        self.assertIn("법원경매정보", " ".join(prompt["prompt_json"]["user"]["writing_rules"]))
 
     def test_prompt_contains_required_sections(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
@@ -302,6 +323,57 @@ class LongtailPlannerTest(unittest.TestCase):
             ).fetchone()
 
         self.assertNotEqual(selected["cluster_id"], published["cluster_id"])
+
+    def test_select_publish_candidate_scopes_published_title_by_domain(self) -> None:
+        with connect(self.db_path) as conn:
+            for domain, semantic_key, variant_key in [
+                ("cheongyak", "same-title-cheongyak", "same-title-cheongyak-variant"),
+                ("auction", "same-title-auction", "same-title-auction-variant"),
+            ]:
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        domain, semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES (?, ?, '테스트', '동일제목', '보조', '테스트 독자', '조건정리', '테스트 상황', '비교', 100, '[]', '{}')
+                    """,
+                    (domain, semantic_key),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', '도메인별 같은 제목 테스트', ?, 100, '{}', 'queued')
+                    """,
+                    (cluster_id, variant_key, f"{variant_key}-slug"),
+                )
+
+        with connect(self.db_path) as conn:
+            cheongyak_id = conn.execute(
+                """
+                SELECT tv.id
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tc.domain = 'cheongyak'
+                """
+            ).fetchone()[0]
+            auction_id = conn.execute(
+                """
+                SELECT tv.id
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tc.domain = 'auction'
+                """
+            ).fetchone()[0]
+
+        mark_published(self.db_path, cheongyak_id, "https://blog.naver.com/example/domain-title")
+        with connect(self.db_path) as conn:
+            self.assertIsNone(is_recent_publish_conflict(conn, variant_id=auction_id))
+            candidate = select_publish_candidate(conn, domain="auction")
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["id"], auction_id)
+        self.assertEqual(candidate["domain"], "auction")
 
     def test_select_publish_candidate_allows_primary_keyword_reuse_for_different_topic(self) -> None:
         with connect(self.db_path) as conn:

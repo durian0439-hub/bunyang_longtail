@@ -532,6 +532,17 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
     rule_lines = [f"- {item}" for item in writing_rules]
     required_sections = user_prompt.get("required_sections", [])
     required_lines = [f"- {item}" for item in required_sections]
+    domain = str(user_prompt.get("domain") or "cheongyak")
+    if domain == "auction":
+        mutable_policy_lines = [
+            "경매 기준과 권리관계는 사건별로 달라질 수 있으니 실시간 조회를 했다고 가정하지 말고, 일반적인 확인 순서와 리스크 판단 중심으로 완성본을 작성하세요.",
+            "최신 매각조건, 점유관계, 대출 가능 여부, 세금·비용은 단정하지 말고 법원경매정보와 관련 서류 확인 필요성을 자연스럽게 안내하세요.",
+        ]
+    else:
+        mutable_policy_lines = [
+            "청약처럼 기준이 바뀔 수 있는 주제라도 실시간 조회를 했다고 가정하지 말고, 일반적인 판단 프레임과 확인 포인트 중심으로 완성본을 작성하세요.",
+            "최신 수치나 세부 요건이 달라질 수 있는 부분은 단정하지 말고, 입주자모집공고와 청약홈 확인 필요성을 자연스럽게 안내하세요.",
+        ]
     return "\n".join(
         [
             system_prompt,
@@ -540,8 +551,7 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             "코드블록, JSON, 설명 문구 없이 결과 본문만 출력하세요.",
             "작업 계획, 예고성 문장, 자기설명은 금지합니다. 완성된 본문만 즉시 출력하세요.",
             "'확인해볼게', '정리해줄게', '바로 글로 묶겠다' 같은 문장은 쓰지 마세요.",
-            "청약처럼 기준이 바뀔 수 있는 주제라도 실시간 조회를 했다고 가정하지 말고, 일반적인 판단 프레임과 확인 포인트 중심으로 완성본을 작성하세요.",
-            "최신 수치나 세부 요건이 달라질 수 있는 부분은 단정하지 말고, 입주자모집공고와 청약홈 확인 필요성을 자연스럽게 안내하세요.",
+            *mutable_policy_lines,
             f"제목: {user_prompt.get('title', '')}",
             f"핵심 키워드: {user_prompt.get('primary_keyword', '')}, {user_prompt.get('secondary_keyword', '')}",
             f"대상자: {user_prompt.get('audience', '')}",
@@ -601,7 +611,7 @@ def build_image_prompt(
             f"요약: {excerpt_text}",
             f"추가 지시: {prompt_text}",
             "출력 조건:",
-            "- 한국 부동산/청약 블로그에 어울리는 깔끔한 스타일",
+            "- 한국 부동산 정보 블로그에 어울리는 깔끔한 스타일",
             "- 핵심 메시지가 한 장에서 바로 보이는 구도",
             "- 과한 텍스트 오버레이 지양",
             "- 1:1 비율 이미지를 우선 생성",

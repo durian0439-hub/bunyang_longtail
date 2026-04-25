@@ -91,6 +91,15 @@ DEFAULT_TAGS = [
     "부동산정보",
 ]
 
+AUCTION_DEFAULT_TAGS = [
+    "경매",
+    "부동산경매",
+    "법원경매",
+    "경매권리분석",
+    "경매체크리스트",
+    "부동산정보",
+]
+
 PUBLISH_ENV_CANDIDATES = [
     Path("/home/kj/app/bunyang/blog-cheongyak-automation/.env"),
     Path("/home/kj/app/bunyang/blog-cheongyak-automation/.env.local"),
@@ -163,6 +172,19 @@ def _trim_text(text: str, max_len: int = 72) -> str:
 
 def _strip_heading_markers(text: str) -> str:
     return re.sub(r"^#+\s*", "", str(text or "").strip()).strip()
+
+
+def _content_domain(title: str, explicit_domain: str | None = None) -> str:
+    if explicit_domain in {"auction", "cheongyak"}:
+        return str(explicit_domain)
+    text = _clean(_strip_heading_markers(title))
+    auction_tokens = (
+        "경매", "입찰", "낙찰", "말소기준권리", "권리분석", "선순위 임차인", "대항력",
+        "배당요구", "명도", "인도명령", "유치권", "법정지상권", "지분경매", "온비드", "공매",
+    )
+    if any(token in text for token in auction_tokens):
+        return "auction"
+    return "cheongyak"
 
 
 def _topic_kind(title: str) -> str:
@@ -1893,7 +1915,7 @@ def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dic
     lines.append("")
 
 
-def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset], related_links: list[dict[str, str]] | None = None) -> str:
+def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset], related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> str:
     lines: list[str] = [f"# {title}", ""]
 
     slot_to_indexes: dict[str, list[int]] = {}
@@ -1929,23 +1951,41 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
             lines.append(f"[[IMAGE:{image_index}]]")
             lines.append("")
 
-    lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
+    if _content_domain(title, domain) == "auction":
+        lines.append("경매 일정과 권리관계, 점유 상태, 대출 가능 여부는 사건별로 달라질 수 있으니 입찰 전 법원경매정보와 관련 서류로 다시 확인해보시기 바랍니다.")
+    else:
+        lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
     lines.append("")
     _append_book_and_related_blocks(lines, related_links=related_links)
     return "\n".join(lines).strip() + "\n"
 
 
-def default_tags(title: str) -> list[str]:
-    tags = list(DEFAULT_TAGS)
-    topic = _topic_kind(title)
-    if topic == "ranking":
-        tags.extend(["1순위조건", "일반공급", "특별공급", "30대맞벌이청약"])
-    elif topic == "institution":
-        tags.extend(["기관추천특별공급", "노부모부양", "특별공급자격", "무주택판정"])
-    elif topic == "cashflow":
-        tags.extend(["분양계약금", "중도금대출", "분양자금계획", "분양취득세", "청약준비"])
+def default_tags(title: str, *, domain: str | None = None) -> list[str]:
+    content_domain = _content_domain(title, domain)
+    if content_domain == "auction":
+        tags = list(AUCTION_DEFAULT_TAGS)
+        text = _clean(title)
+        if any(token in text for token in ["말소기준권리", "권리분석", "근저당", "가압류", "가처분"]):
+            tags.extend(["말소기준권리", "권리분석", "등기부등본"])
+        elif any(token in text for token in ["임차인", "대항력", "배당", "보증금"]):
+            tags.extend(["선순위임차인", "대항력", "배당요구"])
+        elif any(token in text for token in ["명도", "인도명령", "점유"]):
+            tags.extend(["명도", "인도명령", "점유자"])
+        elif any(token in text for token in ["대출", "잔금", "취득세", "수리비"]):
+            tags.extend(["경락잔금대출", "잔금납부", "경매비용"])
+        else:
+            tags.extend(["경매입찰", "경매공부"])
     else:
-        tags.extend(["청약정보", "분양가이드"])
+        tags = list(DEFAULT_TAGS)
+        topic = _topic_kind(title)
+        if topic == "ranking":
+            tags.extend(["1순위조건", "일반공급", "특별공급", "30대맞벌이청약"])
+        elif topic == "institution":
+            tags.extend(["기관추천특별공급", "노부모부양", "특별공급자격", "무주택판정"])
+        elif topic == "cashflow":
+            tags.extend(["분양계약금", "중도금대출", "분양자금계획", "분양취득세", "청약준비"])
+        else:
+            tags.extend(["청약정보", "분양가이드"])
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -1963,7 +2003,7 @@ def _emphasize_publish_text(line: str) -> str:
     if not text or text.startswith("[[IMAGE:"):
         return text
     text = re.sub(r"^(주의|핵심|결론|요약|포인트|체크|질문|답변|예시|정리)(\s*[:：])", r"<strong>\1\2</strong>", text)
-    text = re.sub(r"(일반공급 1순위|특별공급|청약통장|예치금|거주요건|무주택|소득과 자산|계약금|중도금|잔금|취득세|체크리스트|FAQ|How To 분양)", r"<strong>\1</strong>", text)
+    text = re.sub(r"(일반공급 1순위|특별공급|청약통장|예치금|거주요건|무주택|소득과 자산|계약금|중도금|잔금|취득세|체크리스트|FAQ|How To 분양|법원경매|권리분석|말소기준권리|입찰보증금|선순위 임차인|대항력|배당요구|명도|인도명령|유치권|경락잔금대출|How To 경매)", r"<strong>\1</strong>", text)
     return text
 
 
@@ -2018,6 +2058,7 @@ def build_publish_bundle(
     title_override: str | None = None,
     image_provider: str = "local",
     related_links: list[dict[str, str]] | None = None,
+    domain: str | None = None,
 ) -> PublishBundle:
     prepared_article = _prepare_article_for_publish(title=variant_title, article_markdown=article_markdown)
     original_title, sections = parse_publish_sections(prepared_article, title_hint=variant_title)
@@ -2037,9 +2078,10 @@ def build_publish_bundle(
         PublishAsset(slot=asset.slot, kind=asset.kind, label=asset.label, path=_ensure_publish_asset_min_side(asset.path, min_publish_side_px))
         for asset in asset_result.assets
     ]
-    markdown = build_publish_markdown(title=publish_title, sections=sections, assets=assets, related_links=related_links)
+    content_domain = _content_domain(publish_title, domain)
+    markdown = build_publish_markdown(title=publish_title, sections=sections, assets=assets, related_links=related_links, domain=content_domain)
     body_html = markdown_to_html(markdown)
-    tags = default_tags(publish_title)
+    tags = default_tags(publish_title, domain=content_domain)
     apt_id = f"longtail-bundle-{bundle_id}"
     meta = {
         "bundle_id": bundle_id,
@@ -2049,6 +2091,7 @@ def build_publish_bundle(
         "tags": tags,
         "image_provider": asset_result.image_provider,
         "image_provider_requested": asset_result.image_provider_requested,
+        "domain": content_domain,
     }
     if asset_result.image_provider_fallback_from:
         meta["image_provider_fallback_from"] = asset_result.image_provider_fallback_from
@@ -2079,7 +2122,16 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    bundle = conn.execute("SELECT id, variant_id, primary_draft_id FROM article_bundle WHERE id = ?", (bundle_id,)).fetchone()
+    bundle = conn.execute(
+        """
+        SELECT ab.id, ab.variant_id, ab.primary_draft_id, tc.domain
+        FROM article_bundle ab
+        JOIN topic_variant tv ON tv.id = ab.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE ab.id = ?
+        """,
+        (bundle_id,),
+    ).fetchone()
     if not bundle:
         raise ValueError(f"bundle_id={bundle_id} 를 찾지 못했습니다.")
     draft = conn.execute(
@@ -2091,14 +2143,17 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
     related_rows = conn.execute(
         """
         SELECT published_title, naver_url
-        FROM publish_history
-        WHERE channel = 'naver_blog'
-          AND naver_url IS NOT NULL
-          AND bundle_id != ?
-        ORDER BY published_at DESC, id DESC
+        FROM publish_history ph
+        JOIN topic_variant tv ON tv.id = ph.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE ph.channel = 'naver_blog'
+          AND ph.naver_url IS NOT NULL
+          AND ph.bundle_id != ?
+          AND tc.domain = ?
+        ORDER BY ph.published_at DESC, ph.id DESC
         LIMIT 3
         """,
-        (bundle_id,),
+        (bundle_id, bundle["domain"]),
     ).fetchall()
     related_links = [
         {"title": row["published_title"], "url": row["naver_url"]}
@@ -2109,6 +2164,7 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
         "bundle_id": bundle["id"],
         "variant_id": bundle["variant_id"],
         "title": draft["title"],
+        "domain": bundle["domain"],
         "article_markdown": draft["article_markdown"],
         "related_links": related_links,
     }
@@ -2147,6 +2203,7 @@ def publish_bundle_to_naver(
         title_override=title_override,
         image_provider=image_provider,
         related_links=article.get("related_links"),
+        domain=article.get("domain"),
     )
 
     blog_root = Path("/home/kj/app/bunyang/blog-cheongyak-automation")

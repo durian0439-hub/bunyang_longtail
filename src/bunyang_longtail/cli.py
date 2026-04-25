@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from pprint import pprint
 
+from .catalog import DEFAULT_DOMAIN, SUPPORTED_DOMAINS
 from .config import DEFAULT_DB_PATH, DEFAULT_EXPORT_PATH, ensure_data_dir
 from .database import init_db, migrate_db
 from .gpt_web import GptWebExecutionError, probe_gpt_web
@@ -25,7 +26,7 @@ from .workers import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="청약 롱테일 주제/프롬프트 관리 도구")
+    parser = argparse.ArgumentParser(description="분양/경매 롱테일 주제/프롬프트 관리 도구")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB 경로")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -35,10 +36,12 @@ def build_parser() -> argparse.ArgumentParser:
     replenish_parser = subparsers.add_parser("replenish", help="대기열 보충")
     replenish_parser.add_argument("--min-queued", type=int, default=500)
     replenish_parser.add_argument("--variants-per-cluster", type=int, default=4)
+    replenish_parser.add_argument("--domain", choices=SUPPORTED_DOMAINS, default=DEFAULT_DOMAIN)
 
     list_parser = subparsers.add_parser("list", help="변형 주제 조회")
     list_parser.add_argument("--status", default="queued")
     list_parser.add_argument("--limit", type=int, default=20)
+    list_parser.add_argument("--domain", choices=SUPPORTED_DOMAINS, default=DEFAULT_DOMAIN)
 
     prompt_parser = subparsers.add_parser("show-prompt", help="프롬프트 조회")
     prompt_group = prompt_parser.add_mutually_exclusive_group(required=True)
@@ -49,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--status", default="queued")
     export_parser.add_argument("--limit", type=int, default=100)
     export_parser.add_argument("--output", default=str(DEFAULT_EXPORT_PATH))
+    export_parser.add_argument("--domain", choices=SUPPORTED_DOMAINS, default=DEFAULT_DOMAIN)
 
     create_bundle_parser = subparsers.add_parser("create-bundle", help="글 1개 단위 article bundle 생성")
     create_bundle_parser.add_argument("--id", type=int, required=True)
@@ -140,7 +144,8 @@ def build_parser() -> argparse.ArgumentParser:
     published_parser.add_argument("--id", type=int, required=True)
     published_parser.add_argument("--url", required=True)
 
-    subparsers.add_parser("stats", help="통계 보기")
+    stats_parser = subparsers.add_parser("stats", help="통계 보기")
+    stats_parser.add_argument("--domain", choices=[*SUPPORTED_DOMAINS, "all"], default=DEFAULT_DOMAIN)
     subparsers.add_parser("job-stats", help="job 통계 보기")
     return parser
 
@@ -177,12 +182,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "replenish":
-        result = replenish_queue(args.db, min_queued=args.min_queued, variants_per_cluster=args.variants_per_cluster)
+        result = replenish_queue(args.db, min_queued=args.min_queued, variants_per_cluster=args.variants_per_cluster, domain=args.domain)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "list":
-        rows = list_variants(args.db, status=args.status, limit=args.limit)
+        rows = list_variants(args.db, status=args.status, limit=args.limit, domain=args.domain)
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
 
@@ -195,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "export":
-        count = export_prompts(args.db, args.output, status=args.status, limit=args.limit)
+        count = export_prompts(args.db, args.output, status=args.status, limit=args.limit, domain=args.domain)
         print(f"{count}건 내보냈습니다: {args.output}")
         return 0
 
@@ -357,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "stats":
-        pprint(stats(args.db))
+        pprint(stats(args.db, domain=None if args.domain == "all" else args.domain))
         return 0
 
     if args.command == "job-stats":

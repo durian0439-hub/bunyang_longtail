@@ -4,6 +4,8 @@ set -euo pipefail
 export PATH="/home/kj/.npm-global/bin:/home/kj/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 export LONGTAIL_NAVER_CATEGORY_NO="${LONGTAIL_NAVER_CATEGORY_NO:-16}"
 export LONGTAIL_NAVER_CATEGORY_NAME="${LONGTAIL_NAVER_CATEGORY_NAME:-How To 분양}"
+export LONGTAIL_AUCTION_NAVER_CATEGORY_NO="${LONGTAIL_AUCTION_NAVER_CATEGORY_NO:-}"
+export LONGTAIL_AUCTION_NAVER_CATEGORY_NAME="${LONGTAIL_AUCTION_NAVER_CATEGORY_NAME:-How To 경매}"
 export LONGTAIL_GPT_IMAGE_SPEED="${LONGTAIL_GPT_IMAGE_SPEED:-fast}"
 
 DEV_ROOT="/home/kj/app/bunyang_longtail/dev"
@@ -55,13 +57,12 @@ fi
 
   /usr/bin/python3 -m unittest tests.test_naver_bundle_publish tests.test_longtail
 
-  /usr/bin/python3 run.py replenish --min-queued 30 --variants-per-cluster 3
-
   /usr/bin/python3 - <<'PY'
 import json
 import os
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, 'src')
@@ -74,81 +75,165 @@ OUTPUT_BASE = Path('data/naver_publish/cron_runs')
 OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
 MAX_VARIANT_ATTEMPTS = 3
 
-attempted_variant_ids: set[int] = set()
-selected_run_result = None
+DOMAIN_CONFIGS = [
+    {
+        'domain': 'cheongyak',
+        'label': '분양 롱테일',
+        'category_no': os.environ.get('LONGTAIL_NAVER_CATEGORY_NO', '16'),
+        'category_name': os.environ.get('LONGTAIL_NAVER_CATEGORY_NAME', 'How To 분양'),
+    },
+    {
+        'domain': 'auction',
+        'label': '경매 롱테일',
+        'category_no': os.environ.get('LONGTAIL_AUCTION_NAVER_CATEGORY_NO', '').strip(),
+        'category_name': os.environ.get('LONGTAIL_AUCTION_NAVER_CATEGORY_NAME', 'How To 경매'),
+    },
+]
 
-for attempt in range(1, MAX_VARIANT_ATTEMPTS + 1):
-    with connect(DB_PATH) as conn:
-        row = select_publish_candidate(conn, excluded_variant_ids=attempted_variant_ids)
 
-    if not row:
+def _print_json(payload: dict) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, category_name: str) -> dict:
+    out_dir = OUTPUT_BASE / f'{domain}_bundle_{bundle_id}'
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        '/usr/bin/xvfb-run',
+        '-a',
+        '--server-args=-screen 0 1440x1100x24',
+        '/usr/bin/python3',
+        'scripts/publish_bundle_to_naver.py',
+        '--db', DB_PATH,
+        '--bundle-id', str(bundle_id),
+        '--mode', 'publish',
+        '--image-provider', 'gpt_web',
+        '--category-name', category_name,
+        '--output-root', str(out_dir),
+    ]
+    if category_no:
+        cmd.extend(['--category-no', category_no])
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    print(result.stdout)
+    if result.returncode != 0:
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        raise RuntimeError(f'{domain} publish command failed with code {result.returncode}')
+
+    return {
+        'status': 'published',
+        'domain': domain,
+        'bundle_id': bundle_id,
+        'output_root': str(out_dir),
+    }
+
+
+def run_domain(config: dict) -> dict:
+    domain = config['domain']
+    _print_json({'status': 'domain_start', **config})
+
+    replenish_cmd = [
+        '/usr/bin/python3',
+        'run.py',
+        '--db', DB_PATH,
+        'replenish',
+        '--domain', domain,
+        '--min-queued', '30',
+        '--variants-per-cluster', '3',
+    ]
+    replenish = subprocess.run(replenish_cmd, capture_output=True, text=True)
+    print(replenish.stdout)
+    if replenish.returncode != 0:
+        if replenish.stderr:
+            print(replenish.stderr, file=sys.stderr)
+        raise RuntimeError(f'{domain} replenish failed with code {replenish.returncode}')
+
+    attempted_variant_ids: set[int] = set()
+    selected_run_result = None
+
+    for attempt in range(1, MAX_VARIANT_ATTEMPTS + 1):
+        with connect(DB_PATH) as conn:
+            row = select_publish_candidate(conn, domain=domain, excluded_variant_ids=attempted_variant_ids)
+
+        if not row:
+            break
+
+        variant_id = int(row['id'])
+        attempted_variant_ids.add(variant_id)
+        _print_json({
+            'status': 'selected_variant',
+            'domain': domain,
+            'attempt': attempt,
+            'variant_id': variant_id,
+            'title': row['title'],
+        })
+
+        run_target = run_bundle_target_from_candidate(row)
+        run_result = run_bundle(
+            DB_PATH,
+            **run_target,
+            executor_mode='codex_cli',
+            text_route='codex_cli',
+            image_roles=[],
+            simulate=False,
+        )
+        _print_json(run_result)
+
+        blocker = describe_unpublishable_run_result(run_result)
+        if blocker:
+            _print_json({
+                'status': 'skip_publish',
+                'domain': domain,
+                'attempt': attempt,
+                **blocker,
+            })
+            continue
+
+        selected_run_result = run_result
         break
 
-    variant_id = int(row['id'])
-    attempted_variant_ids.add(variant_id)
-    print(json.dumps({
-        'status': 'selected_variant',
-        'attempt': attempt,
-        'variant_id': variant_id,
-        'title': row['title'],
-    }, ensure_ascii=False))
+    if not selected_run_result:
+        payload = {
+            'status': 'noop',
+            'domain': domain,
+            'reason': 'no publishable bundle after attempts',
+            'attempted_variant_ids': sorted(attempted_variant_ids),
+        }
+        _print_json(payload)
+        return payload
 
-    run_target = run_bundle_target_from_candidate(row)
-    run_result = run_bundle(
-        DB_PATH,
-        **run_target,
-        executor_mode='codex_cli',
-        text_route='codex_cli',
-        image_roles=[],
-        simulate=False,
+    bundle_id = int(selected_run_result['bundle']['id'])
+    publish_result = _run_publish_command(
+        domain=domain,
+        bundle_id=bundle_id,
+        category_no=config.get('category_no') or '',
+        category_name=config.get('category_name') or '',
     )
-    print(json.dumps(run_result, ensure_ascii=False, indent=2))
+    _print_json({'status': 'domain_done', **publish_result})
+    return publish_result
 
-    blocker = describe_unpublishable_run_result(run_result)
-    if blocker:
-        print(json.dumps({
-            'status': 'skip_publish',
-            'attempt': attempt,
-            **blocker,
-        }, ensure_ascii=False))
+
+results = []
+for config in DOMAIN_CONFIGS:
+    try:
+        results.append(run_domain(config))
+    except Exception as exc:
+        payload = {
+            'status': 'failed',
+            'domain': config['domain'],
+            'error': str(exc),
+            'traceback': traceback.format_exc(limit=5),
+        }
+        _print_json(payload)
+        results.append(payload)
+        # 분양이 실패해도 경매는 반드시 이어서 실행한다. 마지막에만 실패 코드를 반환한다.
         continue
 
-    selected_run_result = run_result
-    break
-
-if not selected_run_result:
-    print(json.dumps({
-        'status': 'noop',
-        'reason': 'no publishable bundle after attempts',
-        'attempted_variant_ids': sorted(attempted_variant_ids),
-    }, ensure_ascii=False))
-    raise SystemExit(0)
-
-bundle_id = selected_run_result['bundle']['id']
-out_dir = OUTPUT_BASE / f'bundle_{bundle_id}'
-out_dir.mkdir(parents=True, exist_ok=True)
-
-cmd = [
-    '/usr/bin/xvfb-run',
-    '-a',
-    '--server-args=-screen 0 1440x1100x24',
-    '/usr/bin/python3',
-    'scripts/publish_bundle_to_naver.py',
-    '--db', DB_PATH,
-    '--bundle-id', str(bundle_id),
-    '--mode', 'publish',
-    '--image-provider', 'gpt_web',
-    '--category-no', os.environ.get('LONGTAIL_NAVER_CATEGORY_NO', '16'),
-    '--category-name', os.environ.get('LONGTAIL_NAVER_CATEGORY_NAME', 'How To 분양'),
-    '--output-root', str(out_dir),
-]
-result = subprocess.run(cmd, capture_output=True, text=True)
-print(result.stdout)
-if result.returncode != 0:
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
-    raise SystemExit(result.returncode)
+_print_json({'status': 'cron_domain_summary', 'results': results})
+if any(item.get('status') == 'failed' for item in results):
+    raise SystemExit(1)
 PY
-
   echo "[$(date '+%F %T')] done: longtail publish prod"
 } >> "$LOG_FILE" 2>&1

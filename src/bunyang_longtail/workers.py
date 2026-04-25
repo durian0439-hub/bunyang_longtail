@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .catalog import AUCTION_DOMAIN
 from .config import (
     GPT_WEB_ARTIFACT_DIR,
     OPENAI_COMPAT_ARTIFACT_DIR,
@@ -69,7 +70,7 @@ def _fetch_variant(conn: Any, variant_id: int) -> dict[str, Any]:
         conn,
         """
         SELECT v.id, v.title, v.slug, v.prompt_json, v.prompt_version, v.route_policy, v.status,
-               c.id AS cluster_id, c.semantic_key, c.primary_keyword, c.secondary_keyword,
+               c.id AS cluster_id, c.domain, c.semantic_key, c.primary_keyword, c.secondary_keyword,
                c.audience, c.search_intent, c.scenario
         FROM topic_variant v
         JOIN topic_cluster c ON c.id = v.cluster_id
@@ -671,6 +672,34 @@ def _build_simulated_article_markdown(variant: dict[str, Any], image_roles: list
     scenario = variant["scenario"]
     search_intent = variant["search_intent"]
     image_text = ", ".join(image_roles)
+    if variant.get("domain") == AUCTION_DOMAIN:
+        return "\n".join(
+            [
+                f"# {variant['title']}",
+                "",
+                f"{audience} 기준으로 결론부터 보면, {primary_keyword}는 {scenario} 상황에서 입찰 전 보류해야 할 조건부터 확인하는 편이 좋습니다.",
+                "",
+                "## 상단 요약",
+                f"- 핵심 결론: {primary_keyword}와 {secondary_keyword}를 같이 보면 권리와 비용 리스크를 더 빨리 걸러낼 수 있습니다.",
+                f"- 체크 포인트: {search_intent} 목적이면 서류, 점유, 자금, 출구 순서로 확인해야 합니다.",
+                f"- 이미지 세트: {image_text}",
+                "",
+                "## 왜 이 글을 먼저 봐야 하나",
+                f"이 변형안은 {audience}가 가장 자주 막히는 장면인 '{scenario}'를 기준으로 정리했습니다.",
+                "",
+                "## 핵심 판단",
+                f"{primary_keyword}만 보고 들어가기보다 {secondary_keyword}를 함께 봐야 실제 입찰가와 손실 가능성을 나눠 볼 수 있습니다.",
+                "",
+                "## 체크리스트",
+                "- 매각물건명세서와 등기부등본 확인",
+                "- 점유자와 임차인 권리 확인",
+                "- 잔금대출, 취득세, 수리비 확인",
+                "",
+                "## FAQ",
+                "Q. 지금 바로 입찰해도 되나요?",
+                "A. 법원 서류와 현장, 대출 가능 여부를 대조한 뒤 결정해야 합니다.",
+            ]
+        )
     return "\n".join(
         [
             f"# {variant['title']}",
@@ -698,8 +727,6 @@ def _build_simulated_article_markdown(variant: dict[str, Any], image_roles: list
             "A. 공고문과 본인 조건을 대조한 뒤 결정하셔야 합니다.",
         ]
     )
-
-
 
 def _write_simulated_image(file_path: str | Path) -> str:
     path = Path(file_path)
@@ -862,7 +889,10 @@ def run_bundle(
             with connect(db_path) as conn:
                 variant = _fetch_variant(conn, text_job["variant_id"])
             article_markdown = _build_simulated_article_markdown(variant, roles)
-            excerpt = f"{variant['audience']} 기준으로 {variant['primary_keyword']} 판단 포인트를 빠르게 정리한 초안입니다."
+            if variant.get("domain") == AUCTION_DOMAIN:
+                excerpt = f"{variant['audience']} 기준으로 {variant['primary_keyword']} 입찰 전 확인 순서를 빠르게 정리한 초안입니다."
+            else:
+                excerpt = f"{variant['audience']} 기준으로 {variant['primary_keyword']} 판단 포인트를 빠르게 정리한 초안입니다."
             text_result = complete_text_job(
                 db_path,
                 job_id=text_job["job_id"],

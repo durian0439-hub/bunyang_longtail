@@ -119,6 +119,32 @@ Q1. 노부모를 모시면 자동으로 기관추천 특별공급이 되나요?
 
 
 class TestNaverBundlePublish(unittest.TestCase):
+    def test_auction_publish_bundle_uses_auction_disclaimer_and_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = build_publish_bundle(
+                bundle_id=7,
+                variant_title="경매 권리분석과 말소기준권리, 경매초보는 무엇부터 봐야 할까",
+                article_markdown="""# 경매 권리분석과 말소기준권리, 경매초보는 무엇부터 봐야 할까
+
+## 상단 요약
+경매초보라면 입찰 전에 권리와 점유를 먼저 확인해야 합니다.
+
+## FAQ
+Q. 바로 입찰해도 되나요?
+A. 서류와 현장을 다시 확인해야 합니다.
+""",
+                output_root=Path(temp_dir),
+                image_provider="local",
+                domain="auction",
+            )
+
+            meta = json.loads(Path(result.meta_path).read_text(encoding="utf-8"))
+            self.assertEqual(meta["domain"], "auction")
+            self.assertIn("법원경매정보", result.markdown)
+            self.assertIn("경매권리분석", result.tags)
+            self.assertIn("말소기준권리", result.tags)
+            self.assertNotIn("청약정보", result.tags)
+
     def test_persist_publish_result_marks_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.sqlite3"

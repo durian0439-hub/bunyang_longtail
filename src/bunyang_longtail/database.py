@@ -11,6 +11,7 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS topic_cluster (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL DEFAULT 'cheongyak',
     semantic_key TEXT NOT NULL UNIQUE,
     family TEXT NOT NULL,
     primary_keyword TEXT NOT NULL,
@@ -158,7 +159,9 @@ CREATE TABLE IF NOT EXISTS performance_feedback (
 
 INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS idx_cluster_family ON topic_cluster(family);
+CREATE INDEX IF NOT EXISTS idx_cluster_domain_family ON topic_cluster(domain, family);
 CREATE INDEX IF NOT EXISTS idx_cluster_primary ON topic_cluster(primary_keyword);
+CREATE INDEX IF NOT EXISTS idx_cluster_domain_primary ON topic_cluster(domain, primary_keyword);
 CREATE INDEX IF NOT EXISTS idx_variant_cluster_status ON topic_variant(cluster_id, status);
 CREATE INDEX IF NOT EXISTS idx_variant_status ON topic_variant(status);
 CREATE INDEX IF NOT EXISTS idx_bundle_variant ON article_bundle(variant_id);
@@ -223,6 +226,14 @@ def _ensure_column(
 def migrate_db(db_path: str | Path) -> None:
     with connect(db_path) as conn:
         conn.executescript(TABLES_SQL)
+
+        _ensure_column(
+            conn,
+            "topic_cluster",
+            "domain",
+            "TEXT DEFAULT 'cheongyak'",
+            backfill_sql="UPDATE topic_cluster SET domain = 'cheongyak' WHERE domain IS NULL OR domain = ''",
+        )
 
         _ensure_column(
             conn,

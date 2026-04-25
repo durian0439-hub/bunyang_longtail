@@ -4,19 +4,31 @@ import random
 from collections.abc import Collection, Mapping
 from typing import Any
 
+from .catalog import DEFAULT_DOMAIN, SUPPORTED_DOMAINS
 from .database import fetch_all, fetch_one
 
 
-def cleanup_stale_queued_bundles(conn: Any) -> int:
+def _normalize_domain(domain: str | None) -> str:
+    normalized = (domain or DEFAULT_DOMAIN).strip()
+    if normalized not in SUPPORTED_DOMAINS:
+        raise ValueError(f"지원하지 않는 domain 입니다: {domain}")
+    return normalized
+
+
+def cleanup_stale_queued_bundles(conn: Any, *, domain: str = DEFAULT_DOMAIN) -> int:
+    domain = _normalize_domain(domain)
     rows = fetch_all(
         conn,
         """
         SELECT ab.id
         FROM article_bundle ab
         JOIN topic_variant tv ON tv.id = ab.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
         WHERE ab.bundle_status = 'queued'
           AND tv.status = 'published'
+          AND tc.domain = ?
         """,
+        (domain,),
     )
     bundle_ids = [int(row["id"]) for row in rows]
     for bundle_id in bundle_ids:
@@ -60,6 +72,7 @@ def is_recent_publish_conflict(
                 tv.title AS variant_title,
                 tv.slug AS variant_slug,
                 tc.id AS cluster_id,
+                tc.domain,
                 tc.semantic_key,
                 tc.primary_keyword
             FROM topic_variant tv
@@ -75,6 +88,7 @@ def is_recent_publish_conflict(
                 tv.title AS variant_title,
                 tv.slug AS variant_slug,
                 tc.id AS cluster_id,
+                tc.domain,
                 tc.semantic_key,
                 tc.primary_keyword,
                 ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
@@ -96,6 +110,7 @@ def is_recent_publish_conflict(
         FROM candidate c
         JOIN recent_published rp
           ON rp.rn <= ?
+         AND rp.domain = c.domain
          AND (
               rp.cluster_id = c.cluster_id
               OR rp.semantic_key = c.semantic_key
@@ -108,16 +123,21 @@ def is_recent_publish_conflict(
     row = fetch_one(conn, query, (variant_id, guard_count))
     return dict(row) if row else None
 
-
-def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int] | None = None) -> Any:
-    cleanup_stale_queued_bundles(conn)
+def select_publish_candidate(
+    conn: Any,
+    *,
+    domain: str = DEFAULT_DOMAIN,
+    excluded_variant_ids: Collection[int] | None = None,
+) -> Any:
+    domain = _normalize_domain(domain)
+    cleanup_stale_queued_bundles(conn, domain=domain)
     excluded_ids = sorted({int(variant_id) for variant_id in (excluded_variant_ids or [])})
     exclude_sql = ""
-    params: list[Any] = []
+    excluded_params: list[Any] = []
     if excluded_ids:
         placeholders = ", ".join("?" for _ in excluded_ids)
         exclude_sql = f" AND tv.id NOT IN ({placeholders})"
-        params.extend(excluded_ids)
+        excluded_params.extend(excluded_ids)
 
     recovery_query = f"""
         WITH recent_published AS (
@@ -126,6 +146,7 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
                 tv.title AS variant_title,
                 tv.slug AS variant_slug,
                 tc.id AS cluster_id,
+                tc.domain,
                 tc.semantic_key,
                 tc.primary_keyword,
                 ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
@@ -133,10 +154,12 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
+              AND tc.domain = ?
         ),
         published_topics AS (
             SELECT DISTINCT
                 tc.id AS cluster_id,
+                tc.domain,
                 tc.semantic_key,
                 tv.title AS variant_title,
                 tv.slug AS variant_slug
@@ -144,6 +167,7 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
+              AND tc.domain = ?
         )
         SELECT
             tv.id,
@@ -152,13 +176,15 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             tv.use_count,
             tc.priority,
             tc.id AS cluster_id,
+            tc.domain,
             tc.primary_keyword,
             ab.id AS bundle_id,
             1 AS recovery_priority
         FROM article_bundle ab
         JOIN topic_variant tv ON tv.id = ab.variant_id
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
-        WHERE ab.bundle_status = 'queued'
+        WHERE tc.domain = ?
+          AND ab.bundle_status = 'queued'
           AND ab.primary_draft_id IS NOT NULL
           AND ab.primary_thumbnail_id IS NULL
           {exclude_sql}
@@ -184,7 +210,8 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
         ORDER BY ab.id ASC
         LIMIT 1
     """
-    recovery = fetch_one(conn, recovery_query, tuple([*params, RECENT_PUBLISH_GUARD_COUNT]))
+    recovery_params = tuple([domain, domain, domain, *excluded_params, RECENT_PUBLISH_GUARD_COUNT])
+    recovery = fetch_one(conn, recovery_query, recovery_params)
     if recovery:
         return dict(recovery)
 
@@ -195,6 +222,7 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
                 tv.title AS variant_title,
                 tv.slug AS variant_slug,
                 tc.id AS cluster_id,
+                tc.domain,
                 tc.semantic_key,
                 tc.primary_keyword,
                 ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
@@ -202,10 +230,12 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
+              AND tc.domain = ?
         ),
         published_topics AS (
             SELECT DISTINCT
                 tc.id AS cluster_id,
+                tc.domain,
                 tc.semantic_key,
                 tv.title AS variant_title,
                 tv.slug AS variant_slug
@@ -213,6 +243,7 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
+              AND tc.domain = ?
         )
         SELECT
             tv.id,
@@ -221,10 +252,12 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             tv.use_count,
             tc.priority,
             tc.id AS cluster_id,
+            tc.domain,
             tc.primary_keyword
         FROM topic_variant tv
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
-        WHERE tv.status IN ('queued', 'drafted')
+        WHERE tc.domain = ?
+          AND tv.status IN ('queued', 'drafted')
           {exclude_sql}
           AND NOT EXISTS (
               SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
@@ -249,7 +282,7 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
                 )
           )
     """
-    rows = [dict(row) for row in fetch_all(conn, query, tuple([*params, RECENT_PUBLISH_GUARD_COUNT]))]
+    rows = [dict(row) for row in fetch_all(conn, query, tuple([domain, domain, domain, *excluded_params, RECENT_PUBLISH_GUARD_COUNT]))]
     if not rows:
         return None
 
@@ -265,7 +298,6 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
         weights.append(weight)
 
     return random.choices(weighted_rows, weights=weights, k=1)[0]
-
 
 def describe_unpublishable_run_result(run_result: Mapping[str, Any]) -> dict[str, Any] | None:
     bundle = dict(run_result.get("bundle") or {})
