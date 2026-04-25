@@ -1130,6 +1130,123 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(len(result["response_payload"]["style_guard_failures"]), 1)
         self.assertNotIn("이 전략이 맞습니다", result["article_markdown"])
 
+    def test_codex_execute_text_job_soft_fallback_after_style_rewrite_limit(self) -> None:
+        cluster = {
+            "outline_json": json.dumps(
+                [
+                    {"heading": "상단 요약", "points": ["핵심 1", "핵심 2"]},
+                    {"heading": "FAQ", "points": ["질문 1", "질문 2"]},
+                    {"heading": "마무리 결론", "points": ["다음 순서"]},
+                ],
+                ensure_ascii=False,
+            ),
+            "primary_keyword": "계약금",
+            "secondary_keyword": "중도금",
+            "comparison_keyword": "잔금",
+            "audience": "30대 맞벌이",
+            "search_intent": "계산",
+            "scenario": "월 상환액을 따질 때",
+        }
+        variant = {"title": "테스트 제목", "angle": "비교형"}
+        prompt = build_prompt_package(cluster, variant)
+        repeated_guard_phrase = " ".join(["판단"] * 14)
+        structurally_complete_article = f"""# 테스트 제목
+
+계약금이 빠듯한 30대 맞벌이라면 잔금 일정이 밀리면서 선택지가 줄어듭니다. 은행 상담 전에는 필요한 현금과 실행일을 먼저 맞춥니다.
+
+## 상단 요약
+계약금, 중도금, 잔금은 시점이 달라서 한 번에 계산하면 빠지는 돈이 생깁니다.
+대출 가능성은 소득, 기존 대출, 담보가치, 실행일을 함께 봅니다.
+최종 승인과 금리는 금융기관 심사로 확인합니다.
+
+## 이 글에서 바로 답하는 질문
+대출을 어디까지 받을지보다 언제 필요한지가 먼저입니다. {repeated_guard_phrase}
+상담 전에는 계약서, 소득증빙, 기존 대출 내역을 같은 표에 적어 둡니다.
+
+## 핵심 조건 정리
+은행은 소득과 담보만 보지 않고 기존 대출과 상환 부담까지 함께 봅니다. {repeated_guard_phrase}
+잔금일이 다가올수록 서류 보완 시간이 줄어들기 때문에 실행 가능성을 먼저 맞춰야 합니다.
+
+## 헷갈리기 쉬운 예외
+사전 상담 한도와 본심사 한도는 달라질 여지가 있습니다. {repeated_guard_phrase}
+신용대출을 새로 쓰거나 카드론이 늘면 본심사에서 숫자가 바뀝니다.
+
+## 실전 예시 시나리오
+맞벌이 부부가 6억 원 주택을 계약하고 자기자금 2억 원을 준비했다고 가정합니다.
+취득세와 중개보수, 이사비까지 더하면 필요한 금액은 단순 잔금보다 커집니다. {repeated_guard_phrase}
+
+## 체크리스트
+- 소득증빙을 먼저 모읍니다. 인정 소득이 달라지면 한도가 달라집니다.
+- 기존 대출을 적습니다. DSR 계산에서 빠지면 본심사 때 막힙니다.
+- 잔금일을 확인합니다. 실행일이 어긋나면 계약 일정이 흔들립니다.
+
+## FAQ
+### Q1. 대출한도는 바로 확정되나요?
+아닙니다. 예상 한도와 본심사 한도는 다를 수 있습니다.
+### Q2. 맞벌이면 무조건 유리한가요?
+소득 인정 방식과 기존 대출에 따라 달라집니다.
+### Q3. 신용대출을 줄이면 도움이 되나요?
+DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
+### Q4. 정책대출도 같이 봐야 하나요?
+한국주택금융공사와 주택도시기금 요건을 함께 확인합니다.
+### Q5. 금리만 비교하면 되나요?
+우대조건, 실행일, 중도상환수수료까지 함께 봅니다.
+### Q6. 서류는 언제 준비하나요?
+잔금일 전에 보완 시간이 남도록 미리 준비합니다.
+
+## 마무리 결론
+계약금과 잔금 일정이 빠듯한 30대 맞벌이는 한도표보다 실행일과 기존 대출 정리부터 맞추는 흐름이 알맞습니다.
+"""
+        with patch(
+            "bunyang_longtail.codex_cli._resolve_codex_executable",
+            return_value="/home/kj/.npm-global/bin/codex",
+        ), patch(
+            "bunyang_longtail.codex_cli._run_codex_exec",
+            side_effect=[structurally_complete_article, structurally_complete_article, structurally_complete_article],
+        ):
+            result = execute_text_job_codex_cli(
+                job_id=1000,
+                prompt_payload=prompt,
+                artifact_root=Path(self.tmpdir.name) / "codex_cli_artifacts",
+                workdir=Path(self.tmpdir.name),
+            )
+        payload = result["response_payload"]
+        self.assertEqual(payload["style_rewrite_attempts"], 2)
+        self.assertTrue(payload["style_guard_soft_failed"])
+        self.assertTrue(payload["manual_review_required"])
+        self.assertGreaterEqual(len(payload["style_guard_failures"]), 3)
+        self.assertIn("FAQ", result["article_markdown"])
+
+    def test_codex_execute_text_job_strict_style_guard_still_raises_after_rewrite_limit(self) -> None:
+        prompt = build_prompt_package(
+            {
+                "outline_json": json.dumps([{"heading": "상단 요약", "points": ["핵심"]}], ensure_ascii=False),
+                "primary_keyword": "계약금",
+                "secondary_keyword": "중도금",
+                "comparison_keyword": "잔금",
+                "audience": "30대 맞벌이",
+                "search_intent": "계산",
+                "scenario": "월 상환액을 따질 때",
+            },
+            {"title": "테스트 제목", "angle": "비교형"},
+        )
+        long_but_bad_article = "# 테스트 제목\n\n" + "판단 " * 400 + "\n\n## 상단 요약\n본문\n\n## FAQ\n본문\n\n## 마무리 결론\n본문"
+        with patch.dict(os.environ, {"LONGTAIL_STYLE_GUARD_STRICT": "1"}), patch(
+            "bunyang_longtail.codex_cli._resolve_codex_executable",
+            return_value="/home/kj/.npm-global/bin/codex",
+        ), patch(
+            "bunyang_longtail.codex_cli._run_codex_exec",
+            side_effect=[long_but_bad_article, long_but_bad_article, long_but_bad_article],
+        ):
+            with self.assertRaises(CodexCLIExecutionError) as exc_info:
+                execute_text_job_codex_cli(
+                    job_id=1001,
+                    prompt_payload=prompt,
+                    artifact_root=Path(self.tmpdir.name) / "codex_cli_artifacts",
+                    workdir=Path(self.tmpdir.name),
+                )
+        self.assertEqual(exc_info.exception.code, "CODEX_CLI_STYLE_GUARD_FAILED")
+
     def test_run_bundle_cli_simulate_completes_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=5, variants_per_cluster=1)
         exit_code = main(

@@ -71,6 +71,100 @@ BANNED_STYLE_PATTERNS = (
 )
 
 MAX_STYLE_REWRITE_ATTEMPTS = 2
+STYLE_GUARD_STRICT_ENV = "LONGTAIL_STYLE_GUARD_STRICT"
+
+
+def _style_guard_is_strict() -> bool:
+    raw = os.environ.get(STYLE_GUARD_STRICT_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _is_structurally_publishable_article(article_markdown: str) -> bool:
+    """Return True when an article is complete enough to publish despite style warnings.
+
+    Style guards should improve tone, not turn a full cron domain into a no-op.
+    Hard failures still remain for empty/truncated output so publish never proceeds
+    with a one-line error response or incomplete draft.
+    """
+    text = (article_markdown or "").strip()
+    if len(text) < 1200:
+        return False
+    if not re.search(r"^#\s+\S", text, flags=re.MULTILINE):
+        return False
+    if len(re.findall(r"^##\s+", text, flags=re.MULTILINE)) < 4:
+        return False
+    required_markers = ("상단 요약", "FAQ")
+    if not all(marker in text for marker in required_markers):
+        return False
+    if "마무리" not in text and "결론" not in text:
+        return False
+    return True
+
+
+def _soften_house_style_text(article_markdown: str) -> str:
+    """Best-effort deterministic cleanup before allowing a soft style fallback."""
+    text = article_markdown or ""
+    replacements = (
+        (r"판단이 맞습니다", "나눠 보면 흐름이 보입니다"),
+        (r"보는 게 맞습니다", "확인하는 흐름이 낫습니다"),
+        (r"이 전략이 맞습니다", "이 순서가 더 알맞습니다"),
+        (r"청약 판단을 빨리 끝내려면", "청약 전 헷갈리는 부분을 줄이려면"),
+        (r"결론은 단순합니다", "핵심은 여기서 갈립니다"),
+        (r"먼저 보셔야 합니다", "먼저 봅니다"),
+        (r"먼저 확인해야 합니다", "먼저 확인합니다"),
+        (r"쉽게 말하면", "풀어 말하면"),
+        (r"작동 방식", "움직이는 흐름"),
+        (r"판단 기준", "확인할 기준"),
+        (r"적용 기준", "확인할 기준"),
+        (r"유지 전략", "유지 방법"),
+        (r"가능 여부 기준", "가능성을 가르는 기준"),
+        (r"결과는\s*", ""),
+        (r"다음 행동은\s*", ""),
+        (r"무게가 실립니다", "비중이 커집니다"),
+        (r"성격이 강해", "흐름이어서"),
+        (r"쪽으로 갈 수 있습니다", "쪽으로 이어집니다"),
+        (r"조건:", "확인할 점:"),
+        (r"결과:", "결과 확인:"),
+        (r"다음 행동:", "다음 순서:"),
+        (r"입장권에 가깝습니다", "출발점에 가깝습니다"),
+        (r"현실적입니다", "현실에 맞습니다"),
+        (r"현실에 가깝습니다", "실제 상황과 맞닿아 있습니다"),
+        (r"보는 편이 좋습니다", "확인하는 흐름이 낫습니다"),
+        (r"같이 봐야 합니다", "함께 확인합니다"),
+        (r"먼저 비교해보는 편이 좋습니다", "먼저 비교합니다"),
+        (r"큰 역할을 합니다", "영향이 큽니다"),
+        (r"유리하게 작용", "유리하게 이어질 여지"),
+        (r"자연스럽습니다", "흐름이 맞습니다"),
+        (r"구조는 아닙니다", "흐름은 아닙니다"),
+        (r"정리하면 조건부로 가능합니다", "조건을 맞추면 진행 여지가 있습니다"),
+        (r"끝까지 설명할 수 있는지가", "끝까지 설명되는지가"),
+        (r"편이 더 유리합니다", "쪽이 부담을 줄입니다"),
+        (r"일시적 2주택 관리 싸움", "일시적 2주택 일정 관리"),
+        (r"출구 규정", "처분 기한"),
+        (r"일정 규정", "일정 조건"),
+        (r"다음 선택지 규정", "다음 선택지"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text)
+
+    text = re.sub(r"\.{3,}", ".", text)
+    text = re.sub(r"(?:^|\n)\s*(또한|따라서|즉|나아가|그리고|하지만)[,\s]+", "\n", text)
+    text = re.sub(r"첫째[,·.]", "먼저", text)
+    text = re.sub(r"둘째[,·.]", "다음으로", text)
+    text = re.sub(r"셋째[,·.]", "마지막으로", text)
+    text = re.sub(r"결론적으로|요약하면|정리하자면", "", text)
+    text = re.sub(r"시사하는 바가 크다|주목할 만하다", "눈여겨볼 부분입니다", text)
+    text = re.sub(r"혁신적인|획기적인", "새로운", text)
+    text = re.sub(r"할 필요가 있습니다", "해야 합니다", text)
+    text = re.sub(r"할 필요가 있다", "해야 합니다", text)
+    text = re.sub(r"할 수 있습니다", "합니다", text)
+    text = re.sub(r"될 수 있습니다", "됩니다", text)
+    text = re.sub(r"볼 수 있습니다", "확인합니다", text)
+    text = re.sub(r"것입니다", "겁니다", text)
+    text = re.sub(r"것이다", "입니다", text)
+    text = re.sub(r"[✨✅🔥👉—]", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _artifact_dir(job_id: int, artifact_root: str | Path | None = None) -> Path:
@@ -378,6 +472,10 @@ def execute_text_job(
 
     style_guard_failures: list[str] = []
     style_rewrite_attempts = 0
+    style_guard_soft_failed = False
+    style_guard_fallback_applied = False
+    style_guard_fallback_passed = False
+    style_guard_final_failure: str | None = None
     while True:
         try:
             _validate_house_style(article_markdown)
@@ -387,8 +485,30 @@ def execute_text_job(
                 raise
             style_guard_failures.append(str(exc))
             if style_rewrite_attempts >= MAX_STYLE_REWRITE_ATTEMPTS:
+                style_guard_final_failure = str(exc)
+                softened_article = _soften_house_style_text(article_markdown)
+                if softened_article != article_markdown:
+                    style_guard_fallback_applied = True
+                    article_markdown = softened_article
+                    output_file.write_text(article_markdown, encoding="utf-8")
+                    try:
+                        _validate_house_style(article_markdown)
+                        style_guard_fallback_passed = True
+                        break
+                    except CodexCLIExecutionError as fallback_exc:
+                        if fallback_exc.code != "CODEX_CLI_STYLE_GUARD_FAILED":
+                            raise
+                        style_guard_final_failure = str(fallback_exc)
+                        if not style_guard_failures or style_guard_failures[-1] != style_guard_final_failure:
+                            style_guard_failures.append(style_guard_final_failure)
+
+                if not _style_guard_is_strict() and _is_structurally_publishable_article(article_markdown):
+                    style_guard_soft_failed = True
+                    output_file.write_text(article_markdown, encoding="utf-8")
+                    break
+
                 raise CodexCLIExecutionError(
-                    f"Codex CLI 스타일 교정 실패: {style_guard_failures[-1]}",
+                    f"Codex CLI 스타일 교정 실패: {style_guard_final_failure or style_guard_failures[-1]}",
                     code=exc.code,
                     artifact_dir=str(artifact_dir),
                 )
@@ -421,5 +541,10 @@ def execute_text_job(
             "response_preview": article_markdown[:500],
             "style_rewrite_attempts": style_rewrite_attempts,
             "style_guard_failures": style_guard_failures,
+            "style_guard_soft_failed": style_guard_soft_failed,
+            "style_guard_fallback_applied": style_guard_fallback_applied,
+            "style_guard_fallback_passed": style_guard_fallback_passed,
+            "style_guard_final_failure": style_guard_final_failure,
+            "manual_review_required": style_guard_soft_failed,
         },
     }
