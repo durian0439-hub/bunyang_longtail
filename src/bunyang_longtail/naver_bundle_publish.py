@@ -1677,6 +1677,10 @@ def _render_gpt_publish_assets(
     output_root.mkdir(parents=True, exist_ok=True)
     excerpt = _publish_image_excerpt(title, sections)
     plans = _build_gpt_publish_image_plans(title, sections, inline_table_specs=inline_table_specs)
+    max_assets_raw = str(os.getenv("NAVER_BLOG_GPT_IMAGE_MAX_ASSETS", "0")).strip()
+    max_assets = int(max_assets_raw) if max_assets_raw.isdigit() else 0
+    if max_assets > 0:
+        plans = plans[:max_assets]
     assets: list[PublishAsset] = []
     job_seed = int(time.time() * 1000)
 
@@ -1724,7 +1728,7 @@ def _render_gpt_publish_assets(
             "--output-path", str(output_path),
             "--artifact-root", str(Path("/home/kj/app/bunyang_longtail/dev/data/gpt_web_artifacts") / "naver_publish"),
         ]
-        timeout_seconds = 900
+        timeout_seconds = int(str(os.getenv("NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC", "480")).strip() or "480")
         last_detail = ""
         for attempt in range(1, 3):
             try:
