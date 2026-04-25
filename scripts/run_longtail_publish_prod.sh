@@ -31,10 +31,12 @@ export LONGTAIL_NAVER_OUTPUT_BASE="$OUTPUT_BASE"
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-  echo "[$(date '+%F %T')] skip: previous longtail publish job still running" >> "$LOG_FILE"
-  exit 0
+if [[ "${LONGTAIL_LOCK_ALREADY_HELD:-0}" != "1" ]]; then
+  exec 9>"$LOCK_FILE"
+  if ! flock -n 9; then
+    echo "[$(date '+%F %T')] skip: previous longtail publish job still running" >> "$LOG_FILE"
+    exit 0
+  fi
 fi
 
 {
@@ -65,14 +67,11 @@ fi
   git fetch origin main
   local_rev="$(git rev-parse HEAD)"
   remote_rev="$(git rev-parse origin/main)"
-  base_rev="$(git merge-base HEAD origin/main)"
   if [[ "$local_rev" == "$remote_rev" ]]; then
     echo "git status: prod main already synced with origin/main"
-  elif [[ "$local_rev" == "$base_rev" ]]; then
-    git merge --ff-only origin/main
   else
-    echo "error: prod main is ahead of or diverged from origin/main; fix prod checkout before cron execution"
-    echo "local=$local_rev remote=$remote_rev base=$base_rev"
+    echo "error: prod checkout is not synced with origin/main; sync must finish before running the in-repo runner"
+    echo "local=$local_rev remote=$remote_rev"
     exit 1
   fi
 
@@ -129,6 +128,15 @@ DOMAIN_CONFIGS = [
         'category_name': os.environ.get('LONGTAIL_LOAN_NAVER_CATEGORY_NAME', '부동산 대출'),
     },
 ]
+
+requested_domains_raw = os.environ.get('LONGTAIL_DOMAINS', '').strip()
+if requested_domains_raw:
+    requested_domains = [item.strip() for item in requested_domains_raw.split(',') if item.strip()]
+    known_domains = {item['domain'] for item in DOMAIN_CONFIGS}
+    unknown_domains = sorted(set(requested_domains) - known_domains)
+    if unknown_domains:
+        raise SystemExit(f"unknown LONGTAIL_DOMAINS: {', '.join(unknown_domains)}")
+    DOMAIN_CONFIGS = [item for item in DOMAIN_CONFIGS if item['domain'] in requested_domains]
 
 
 def _print_json(payload: dict) -> None:
