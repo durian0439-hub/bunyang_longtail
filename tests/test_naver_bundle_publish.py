@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import types
@@ -264,6 +265,108 @@ A. 서류와 현장을 다시 확인해야 합니다.
             status_map = {row["status"]: row["cnt"] for row in summary["by_status"]}
             self.assertEqual(status_map.get("published"), 1)
 
+    def test_load_bundle_article_returns_latest_related_link_in_same_category_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.sqlite3"
+            init_db(db_path)
+            migrate_db(db_path)
+
+            def add_bundle(
+                conn: sqlite3.Connection,
+                *,
+                domain: str,
+                semantic_key: str,
+                title: str,
+                published_url: str | None = None,
+                published_at: str | None = None,
+            ) -> int:
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        domain, semantic_key, family, primary_keyword, secondary_keyword,
+                        audience, search_intent, scenario, priority, outline_json, policy_json
+                    ) VALUES (?, ?, '기초', ?, '', '청약초보', '조건정리', '처음 준비할 때', 10, '{}', '{}')
+                    """,
+                    (domain, semantic_key, title),
+                )
+                cluster_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (
+                        cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status
+                    ) VALUES (?, ?, '체크리스트형', ?, ?, 80, '{}', 'drafted')
+                    """,
+                    (cluster_id, f"variant-{semantic_key}", title, f"slug-{semantic_key}"),
+                )
+                variant_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute("INSERT INTO article_bundle (variant_id, bundle_status) VALUES (?, 'bundled')", (variant_id,))
+                bundle_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO article_draft (bundle_id, variant_id, title, article_markdown)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (bundle_id, variant_id, title, f"# {title}\n\n본문"),
+                )
+                draft_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute("UPDATE article_bundle SET primary_draft_id = ? WHERE id = ?", (draft_id, bundle_id))
+                if published_url and published_at:
+                    conn.execute(
+                        """
+                        INSERT INTO publish_history (
+                            bundle_id, variant_id, draft_id, channel, target_account,
+                            publish_mode, published_title, naver_url, published_at, result_json
+                        ) VALUES (?, ?, ?, 'naver_blog', 'default', 'publish', ?, ?, ?, '{}')
+                        """,
+                        (bundle_id, variant_id, draft_id, title, published_url, published_at),
+                    )
+                return bundle_id
+
+            with sqlite3.connect(db_path) as conn:
+                current_bundle_id = add_bundle(
+                    conn,
+                    domain="cheongyak",
+                    semantic_key="current-cheongyak",
+                    title="현재 분양 글",
+                )
+                add_bundle(
+                    conn,
+                    domain="cheongyak",
+                    semantic_key="old-cheongyak",
+                    title="오래된 분양 글",
+                    published_url="https://blog.naver.com/example/old-cheongyak",
+                    published_at="2026-04-24 01:00:00",
+                )
+                add_bundle(
+                    conn,
+                    domain="cheongyak",
+                    semantic_key="new-cheongyak",
+                    title="가장 최근 분양 글",
+                    published_url="https://blog.naver.com/example/new-cheongyak",
+                    published_at="2026-04-25 01:00:00",
+                )
+                add_bundle(
+                    conn,
+                    domain="auction",
+                    semantic_key="new-auction",
+                    title="가장 최근 경매 글",
+                    published_url="https://blog.naver.com/example/new-auction",
+                    published_at="2026-04-25 02:00:00",
+                )
+
+            article = target.load_bundle_article(db_path, current_bundle_id)
+
+            self.assertEqual(
+                article["related_links"],
+                [
+                    {
+                        "category_name": "How To 분양",
+                        "title": "가장 최근 분양 글",
+                        "url": "https://blog.naver.com/example/new-cheongyak",
+                    }
+                ],
+            )
+
     def test_publish_bundle_script_forwards_category_args(self) -> None:
         script_path = ROOT / "scripts" / "publish_bundle_to_naver.py"
         spec = importlib.util.spec_from_file_location("publish_bundle_script", script_path)
@@ -501,6 +604,45 @@ Q1. 바로 신청해도 되나요?
 
         self.assertNotIn("...", markdown)
         self.assertIn("기존 주택 처분 조건, 세대 기준, 자금 일정을 하나라도 놓치면", markdown)
+
+    def test_build_publish_markdown_formats_related_link_on_separate_lines(self) -> None:
+        _, sections = parse_publish_sections(
+            SPARSE_CASHFLOW_ARTICLE,
+            title_hint="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+        )
+        markdown = target.build_publish_markdown(
+            title="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+            sections=sections,
+            assets=[],
+            related_links=[
+                {
+                    "category_name": "How To 분양",
+                    "title": "규제지역 거주의무와 재당첨 제한 1주택 갈아타기",
+                    "url": "https://blog.naver.com/example/recent",
+                }
+            ],
+        )
+
+        self.assertIn(
+            "관련 글\nHow To 분양 최신 글\n규제지역 거주의무와 재당첨 제한 1주택 갈아타기\nhttps://blog.naver.com/example/recent",
+            markdown,
+        )
+        self.assertNotIn("[규제지역 거주의무와 재당첨 제한 1주택 갈아타기](https://blog.naver.com/example/recent)", markdown)
+
+    def test_build_publish_markdown_omits_related_placeholder_when_empty(self) -> None:
+        _, sections = parse_publish_sections(
+            SPARSE_CASHFLOW_ARTICLE,
+            title_hint="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+        )
+        markdown = target.build_publish_markdown(
+            title="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+            sections=sections,
+            assets=[],
+            related_links=[],
+        )
+
+        self.assertNotIn("다음 글부터 관련 글이 자동으로 연결됩니다", markdown)
+        self.assertNotIn("관련 글\n-", markdown)
 
     def test_build_publish_bundle_falls_back_to_local_when_gpt_image_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(

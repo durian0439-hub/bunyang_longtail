@@ -2057,10 +2057,18 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
 BOOK_LINK_URL = "https://link.coupang.com/a/esfszm"
 AUCTION_BOOK_LINK_URL = "https://link.coupang.com/a/espLX0"
 BOOK_NOTICE_TEXT = '"이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."'
+RELATED_CATEGORY_LABELS = {
+    "cheongyak": "How To 분양",
+    "auction": "How To 경매",
+}
 
 
 def _book_link_url_for_domain(domain: str | None = None) -> str:
     return AUCTION_BOOK_LINK_URL if _content_domain("", domain) == "auction" else BOOK_LINK_URL
+
+
+def _related_category_label(domain: str | None = None) -> str:
+    return RELATED_CATEGORY_LABELS.get(_content_domain("", domain), "카테고리")
 
 
 def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> None:
@@ -2070,18 +2078,24 @@ def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dic
     book_link_url = _book_link_url_for_domain(domain)
     if book_link_url:
         lines.append(book_link_url)
-    lines.append("")
-    lines.append("관련 글")
-    if related_links:
-        for item in related_links:
-            title = (item.get("title") or "이전 글").strip()
-            url = (item.get("url") or "").strip()
-            if not url:
-                continue
-            lines.append(f"- [{title}]({url})")
-    else:
-        lines.append("- 다음 글부터 관련 글이 자동으로 연결됩니다.")
-    lines.append("")
+
+    cleaned_related: list[dict[str, str]] = []
+    for item in related_links or []:
+        title = (item.get("title") or "이전 글").strip()
+        url = (item.get("url") or "").strip()
+        if not url:
+            continue
+        category_name = (item.get("category_name") or item.get("category") or _related_category_label(domain)).strip()
+        cleaned_related.append({"category_name": category_name, "title": title, "url": url})
+
+    if cleaned_related:
+        lines.append("")
+        lines.append("관련 글")
+        for item in cleaned_related:
+            lines.append(f"{item['category_name']} 최신 글")
+            lines.append(item["title"])
+            lines.append(item["url"])
+            lines.append("")
 
 
 def _validate_domain_publish_markdown(markdown: str, *, domain: str | None = None) -> None:
@@ -2325,7 +2339,7 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
         raise ValueError(f"draft_id={bundle['primary_draft_id']} 를 찾지 못했습니다.")
     related_rows = conn.execute(
         """
-        SELECT published_title, naver_url
+        SELECT published_title, naver_url, tc.domain
         FROM publish_history ph
         JOIN topic_variant tv ON tv.id = ph.variant_id
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
@@ -2334,12 +2348,16 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
           AND ph.bundle_id != ?
           AND tc.domain = ?
         ORDER BY ph.published_at DESC, ph.id DESC
-        LIMIT 3
+        LIMIT 1
         """,
         (bundle_id, bundle["domain"]),
     ).fetchall()
     related_links = [
-        {"title": row["published_title"], "url": row["naver_url"]}
+        {
+            "category_name": _related_category_label(row["domain"]),
+            "title": row["published_title"],
+            "url": row["naver_url"],
+        }
         for row in related_rows
         if row["naver_url"]
     ]
