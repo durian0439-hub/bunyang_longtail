@@ -661,7 +661,7 @@ def export_prompts(db_path: str | Path, output_path: str | Path, status: str = "
             handle.write(json.dumps(item, ensure_ascii=False) + "\n")
     return len(rows)
 
-def mark_published(db_path: str | Path, variant_id: int, url: str) -> None:
+def mark_published(db_path: str | Path, variant_id: int, url: str, *, published_title: str | None = None) -> None:
     init_db(db_path)
     with connect(db_path) as conn:
         row = fetch_one(conn, "SELECT title FROM topic_variant WHERE id = ?", (variant_id,))
@@ -675,7 +675,7 @@ def mark_published(db_path: str | Path, variant_id: int, url: str) -> None:
         if draft:
             draft_id = draft["id"]
             bundle_id = draft["bundle_id"]
-            published_title = draft["title"]
+            published_title = published_title or draft["title"]
             conn.execute(
                 """
                 UPDATE article_draft
@@ -699,7 +699,7 @@ def mark_published(db_path: str | Path, variant_id: int, url: str) -> None:
                 (bundle_id, variant_id, row["title"], url),
             )
             draft_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            published_title = row["title"]
+            published_title = published_title or row["title"]
         conn.execute(
             """
             UPDATE topic_variant

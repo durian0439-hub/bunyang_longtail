@@ -628,7 +628,7 @@ def build_publish_title(original_title: str) -> str:
     title = title.replace('체크 포인트', '')
     title = title.replace('탈락 포인트', '')
     title = ' '.join(title.split())
-    return title[:60].rstrip()
+    return title.rstrip(' ,')
 
 
 def _intro_text(sections: list[PublishSection], *, domain: str | None = None) -> str:
@@ -2356,7 +2356,7 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
     conn.row_factory = sqlite3.Row
     bundle = conn.execute(
         """
-        SELECT ab.id, ab.variant_id, ab.primary_draft_id, tc.domain
+        SELECT ab.id, ab.variant_id, ab.primary_draft_id, tc.domain, tv.title AS variant_title
         FROM article_bundle ab
         JOIN topic_variant tv ON tv.id = ab.variant_id
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
@@ -2399,7 +2399,7 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
     return {
         "bundle_id": bundle["id"],
         "variant_id": bundle["variant_id"],
-        "title": draft["title"],
+        "title": bundle["variant_title"] or draft["title"],
         "domain": bundle["domain"],
         "article_markdown": draft["article_markdown"],
         "related_links": related_links,
@@ -2416,7 +2416,8 @@ def _persist_publish_result(db_path: str | Path, article: dict[str, Any], result
 
     from .planner import mark_published
 
-    mark_published(db_path, int(article["variant_id"]), publish_url)
+    published_title = _clean(str(result.get("published_title") or article.get("title") or "")) or None
+    mark_published(db_path, int(article["variant_id"]), publish_url, published_title=published_title)
 
 
 def _requires_gpt_publish_images(image_provider: str) -> bool:
@@ -2494,6 +2495,7 @@ def publish_bundle_to_naver(
     result["ok"] = ok
     result["bundle_id"] = bundle_id
     result["meta_path"] = publish_bundle.meta_path
+    result["published_title"] = publish_bundle.title
     result["image_provider"] = publish_bundle.image_provider
     result["image_provider_requested"] = publish_bundle.image_provider_requested
     if publish_bundle.image_provider_fallback_from:

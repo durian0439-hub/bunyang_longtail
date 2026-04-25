@@ -256,14 +256,17 @@ A. 서류와 현장을 다시 확인해야 합니다.
 
             _persist_publish_result(
                 db_path,
-                {"variant_id": variant_id},
-                {"ok": True, "current_url": "https://blog.naver.com/example/1"},
+                {"variant_id": variant_id, "title": "후보 제목 전체 문장"},
+                {"ok": True, "current_url": "https://blog.naver.com/example/1", "published_title": "실제 발행 제목 전체 문장"},
             )
 
             summary = stats(db_path)
             self.assertEqual(summary["publish_history"], 1)
             status_map = {row["status"]: row["cnt"] for row in summary["by_status"]}
             self.assertEqual(status_map.get("published"), 1)
+            with sqlite3.connect(db_path) as conn:
+                published_title = conn.execute("SELECT published_title FROM publish_history").fetchone()[0]
+            self.assertEqual(published_title, "실제 발행 제목 전체 문장")
 
     def test_load_bundle_article_returns_latest_related_link_in_same_category_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -366,6 +369,48 @@ A. 서류와 현장을 다시 확인해야 합니다.
                     }
                 ],
             )
+
+    def test_load_bundle_article_uses_variant_title_not_truncated_draft_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.sqlite3"
+            init_db(db_path)
+            migrate_db(db_path)
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        domain, semantic_key, family, primary_keyword, secondary_keyword,
+                        audience, search_intent, scenario, priority, outline_json, policy_json
+                    ) VALUES ('cheongyak', 'title-source-test', '자금', '계약금', '', '30대 맞벌이', '실수방지', '월 상환액을 따질 때', 10, '{}', '{}')
+                    """
+                )
+                cluster_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                full_title = "계약금 중도금 잔금 월 상환액을 따질 때, 30대 맞벌이가 놓치면 탈락하는 포인트"
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (
+                        cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status
+                    ) VALUES (?, 'title-source-variant', '실수방지형', ?, 'title-source-slug', 80, '{}', 'drafted')
+                    """,
+                    (cluster_id, full_title),
+                )
+                variant_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute("INSERT INTO article_bundle (variant_id, bundle_status) VALUES (?, 'bundled')", (variant_id,))
+                bundle_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO article_draft (bundle_id, variant_id, title, article_markdown)
+                    VALUES (?, ?, '계약금 중도금 잔금 월 상환액을 따질 때 30대 맞벌이가 놓치면 탈락하는 포', '# 본문')
+                    """,
+                    (bundle_id, variant_id),
+                )
+                draft_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute("UPDATE article_bundle SET primary_draft_id = ? WHERE id = ?", (draft_id, bundle_id))
+
+            article = target.load_bundle_article(db_path, bundle_id)
+
+            self.assertEqual(article["title"], full_title)
+            self.assertTrue(article["title"].endswith("포인트"))
 
     def test_publish_bundle_script_forwards_category_args(self) -> None:
         script_path = ROOT / "scripts" / "publish_bundle_to_naver.py"
@@ -558,6 +603,11 @@ A. 서류와 현장을 다시 확인해야 합니다.
         title = build_publish_title("1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까")
         self.assertIn("30대 맞벌이 청약 1순위 조건", title)
         self.assertIn("뭐가 다를까", title)
+
+    def test_build_publish_title_does_not_cut_sentence_tail(self) -> None:
+        title = build_publish_title("무료 경매 사이트와 법원경매정보, 경매초보는 무엇부터 봐야 할까")
+        self.assertEqual(title, "무료 경매 사이트와 법원경매정보, 경매초보는 무엇부터 봐야 할까")
+        self.assertTrue(title.endswith("봐야 할까"))
 
     def test_build_publish_bundle_writes_markdown_and_images(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
