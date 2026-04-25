@@ -14,6 +14,7 @@ from typing import Any
 
 ROOT = Path(os.getenv("BUNYANG_LONGTAIL_ROOT", Path(__file__).resolve().parents[2])).resolve()
 
+from .config import GPT_WEB_ARTIFACT_DIR, OPENAI_COMPAT_ARTIFACT_DIR
 from .local_image_fallback import _pick_font_path, _summary_source
 
 try:
@@ -1820,7 +1821,7 @@ def _render_gpt_publish_assets(
                     excerpt=excerpt,
                     image_role=plan.image_role,
                     output_path=output_path,
-                    artifact_root=Path("/home/kj/app/bunyang_longtail/dev/data/openai_compat_artifacts") / "naver_publish",
+                    artifact_root=OPENAI_COMPAT_ARTIFACT_DIR / "naver_publish",
                 )
             except OpenAICompatExecutionError as exc:
                 detail = str(exc)
@@ -1845,7 +1846,7 @@ def _render_gpt_publish_assets(
             "--excerpt", excerpt,
             "--image-role", plan.image_role,
             "--output-path", str(output_path),
-            "--artifact-root", str(Path("/home/kj/app/bunyang_longtail/dev/data/gpt_web_artifacts") / "naver_publish"),
+            "--artifact-root", str(GPT_WEB_ARTIFACT_DIR / "naver_publish"),
         ]
         timeout_seconds = int(str(os.getenv("NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC", "480")).strip() or "480")
         last_detail = ""

@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import ensure_data_dir
+from .config import CODEX_CLI_ARTIFACT_DIR, PROJECT_ROOT, ensure_data_dir
 from .gpt_web import build_text_prompt
 from .humanize_style import detect_ai_tell_findings, summarize_findings
 
@@ -168,7 +168,7 @@ def _soften_house_style_text(article_markdown: str) -> str:
 
 
 def _artifact_dir(job_id: int, artifact_root: str | Path | None = None) -> Path:
-    base = Path(artifact_root) if artifact_root else Path("/home/kj/app/bunyang_longtail/dev/data/codex_cli_artifacts")
+    base = Path(artifact_root).resolve() if artifact_root else CODEX_CLI_ARTIFACT_DIR
     path = base / f"text_job_{job_id}"
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -458,7 +458,7 @@ def execute_text_job(
     prompt_file.write_text(prompt_text, encoding="utf-8")
 
     codex_executable = _resolve_codex_executable()
-    workdir_path = workdir or "/home/kj/app/bunyang_longtail/dev"
+    workdir_path = Path(workdir).resolve() if workdir else PROJECT_ROOT
     article_markdown = _run_codex_exec(
         codex_executable=codex_executable,
         workdir=workdir_path,
