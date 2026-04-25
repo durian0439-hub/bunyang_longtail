@@ -840,6 +840,8 @@ def build_publish_title(original_title: str) -> str:
     title = title.replace('핵심 포인트', '')
     title = title.replace('체크 포인트', '')
     title = title.replace('탈락 포인트', '')
+    title = re.sub(r'([가-힣A-Za-z0-9]+)\s+기준\s+기준\b', r'\1 기준', title)
+    title = re.sub(r'([가-힣A-Za-z0-9]+)\s+정리\s+정리\b', r'\1 정리', title)
     title = ' '.join(title.split())
     return title.rstrip(' ,')
 
@@ -2323,7 +2325,7 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
             "- 신청 직전에 무엇부터 확인해야 실수가 줄어드는지",
         ]
     return [
-        "청약 판단을 빨리 끝내려면 조건을 한 줄씩 분리해서 보셔야 합니다.",
+        "청약은 세대 기준, 일정 기준일, 자금 계획을 따로 나눠 보면 실수가 줄어듭니다.",
         "",
         _intro_text(sections, domain=content_domain),
     ]

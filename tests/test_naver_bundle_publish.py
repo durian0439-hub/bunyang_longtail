@@ -649,6 +649,17 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertEqual(title, "무료 경매 사이트와 법원경매정보, 경매초보는 무엇부터 봐야 할까")
         self.assertTrue(title.endswith("봐야 할까"))
 
+    def test_build_publish_title_collapses_duplicate_suffix_label(self) -> None:
+        title = build_publish_title("무주택 기준과 주택 수 판정, 30대 맞벌이는 무엇이 다를까, 무주택 기준 기준")
+        self.assertEqual(title, "무주택 기준과 주택 수 판정, 30대 맞벌이는 무엇이 다를까, 무주택 기준")
+        self.assertNotIn("기준 기준", title)
+
+    def test_default_cheongyak_lead_avoids_manual_review_phrase(self) -> None:
+        _, sections = parse_publish_sections(SAMPLE_ARTICLE, title_hint="무주택 기준과 주택 수 판정, 30대 맞벌이는 무엇이 다를까")
+        lead = "\n".join(target._lead_blocks("무주택 기준과 주택 수 판정, 30대 맞벌이는 무엇이 다를까", sections, domain="cheongyak"))
+        self.assertNotIn("청약 판단을 빨리 끝내려면", lead)
+        self.assertNotIn("보셔야 합니다", lead)
+
     def test_build_publish_bundle_writes_markdown_and_images(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle = build_publish_bundle(

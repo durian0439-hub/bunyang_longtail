@@ -736,7 +736,7 @@ def _build_simulated_article_markdown(variant: dict[str, Any], image_roles: list
             "",
             "## 상단 요약",
             f"- 핵심 결론: {primary_keyword}와 {secondary_keyword}를 같이 보면 판단이 빨라집니다.",
-            f"- 체크 포인트: {search_intent} 목적이면 조건, 일정, 리스크를 먼저 보셔야 합니다.",
+            f"- 체크 항목: {search_intent} 목적이면 조건, 일정, 리스크를 먼저 나눠 확인합니다.",
             f"- 이미지 세트: {image_text}",
             "",
             "## 왜 이 글을 먼저 봐야 하나",
