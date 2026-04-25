@@ -1468,8 +1468,20 @@ def _table_specs(title: str, sections: list[PublishSection]) -> list[dict[str, A
     fallback_rows = _simple_rows_from_lines((checklist_section.lines if checklist_section else []), limit=4)
     return [
         {
+            "slot": key_slot,
+            "file_name": "01_decision_table.png",
+            "label": "핵심 판단 기준표",
+            "headers": ["확인 항목", "먼저 볼 기준", "주의 포인트"],
+            "rows": [
+                ["자격", "세대·주택 수·거주요건", "공고문 기준일로 다시 확인"],
+                ["일정", "모집공고·접수·발표일", "마감 시간을 따로 체크"],
+                ["자금", "계약금·중도금·잔금", "대출 가능 여부를 먼저 상담"],
+                ["리스크", "부적격·예비당첨·계약 포기", "신청 전 체크리스트로 재점검"],
+            ],
+        },
+        {
             "slot": checklist_slot,
-            "file_name": "01_checklist_table.png",
+            "file_name": "02_checklist_table.png",
             "label": "신청 전 체크리스트",
             "headers": ["순서", "확인 항목"],
             "rows": [[str(idx + 1), item] for idx, item in enumerate(fallback_rows or [
@@ -1478,7 +1490,7 @@ def _table_specs(title: str, sections: list[PublishSection]) -> list[dict[str, A
                 "세대 기준 조건 다시 확인하기",
                 "공고문과 청약홈으로 최종 점검하기",
             ])],
-        }
+        },
     ]
 
 

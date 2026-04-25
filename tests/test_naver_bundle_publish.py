@@ -933,6 +933,52 @@ Q1. 바로 신청해도 되나요?
         self.assertIn("Do not use a 4-panel grid", plans[1].prompt_text)
         self.assertIn("public service campaign poster", plans[1].prompt_text)
 
+    def test_build_gpt_publish_image_plans_generic_cheongyak_uses_11_assets(self) -> None:
+        article = """# 예비당첨 가점 낮은 무주택 실수요자, 무엇부터 확인해야 할까
+
+## 상단 요약
+예비당첨은 번호와 포기 물량 흐름을 같이 봐야 합니다.
+
+## 이 글에서 바로 답하는 질문
+가점이 낮아도 예비당첨으로 기회가 생길 수 있는지 확인합니다.
+
+## 핵심 조건 정리
+무주택, 거주요건, 청약통장 조건을 먼저 봅니다.
+
+## 헷갈리기 쉬운 예외
+예비번호가 앞쪽이어도 계약 포기 물량이 적으면 어렵습니다.
+
+## 실전 예시 시나리오
+가점은 낮지만 무주택 기간과 자금 계획이 준비된 경우를 봅니다.
+
+## 체크리스트
+모집공고 기준일 확인
+예비당첨 연락 방식 확인
+계약금 준비 여부 확인
+
+## FAQ
+Q1. 예비당첨이면 무조건 계약 가능한가요?
+아닙니다.
+
+## 마무리 결론
+예비당첨은 가능성보다 조건과 자금 준비를 먼저 보셔야 합니다.
+"""
+        _, sections = parse_publish_sections(
+            article,
+            title_hint="예비당첨 가점 낮은 무주택 실수요자, 무엇부터 확인해야 할까",
+        )
+        plans = _build_gpt_publish_image_plans(
+            "예비당첨 가점 낮은 무주택 실수요자, 무엇부터 확인해야 할까",
+            sections,
+        )
+
+        self.assertEqual(len(plans), 11)
+        self.assertEqual(plans[0].slot, "lead")
+        self.assertEqual(plans[-2].slot, "핵심 판단 기준::before")
+        self.assertEqual(plans[-1].slot, "신청 전 체크리스트::before")
+        self.assertIn("핵심 판단 기준표", plans[-2].label)
+        self.assertIn("신청 전 체크리스트", plans[-1].label)
+
     def test_build_gpt_publish_image_plans_auction_matches_cheongyak_structure(self) -> None:
         _, sections = parse_publish_sections(
             AUCTION_LONG_ARTICLE,
