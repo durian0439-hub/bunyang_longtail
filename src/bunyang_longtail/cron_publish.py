@@ -119,6 +119,13 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
+        ),
+        published_clusters AS (
+            SELECT DISTINCT tc.id AS cluster_id
+            FROM publish_history ph
+            JOIN topic_variant tv ON tv.id = ph.variant_id
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE ph.channel = 'naver_blog'
         )
         SELECT
             tv.id,
@@ -137,6 +144,11 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
           AND ab.primary_draft_id IS NOT NULL
           AND ab.primary_thumbnail_id IS NULL
           {exclude_sql}
+          AND NOT EXISTS (
+              SELECT 1
+              FROM published_clusters pc
+              WHERE pc.cluster_id = tc.id
+          )
           AND NOT EXISTS (
               SELECT 1
               FROM recent_published rp
@@ -164,6 +176,13 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
+        ),
+        published_clusters AS (
+            SELECT DISTINCT tc.id AS cluster_id
+            FROM publish_history ph
+            JOIN topic_variant tv ON tv.id = ph.variant_id
+            JOIN topic_cluster tc ON tc.id = tv.cluster_id
+            WHERE ph.channel = 'naver_blog'
         )
         SELECT
             tv.id,
@@ -179,6 +198,11 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
           {exclude_sql}
           AND NOT EXISTS (
               SELECT 1 FROM publish_history ph WHERE ph.variant_id = tv.id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM published_clusters pc
+              WHERE pc.cluster_id = tc.id
           )
           AND NOT EXISTS (
               SELECT 1

@@ -480,6 +480,75 @@ class LongtailPlannerTest(unittest.TestCase):
         blocked_keys = set(list(variant_by_key.keys())[:4])
         self.assertNotIn((row["family"], row["primary_keyword"]), blocked_keys)
 
+    def test_select_publish_candidate_blocks_previously_published_cluster_even_when_not_recent(self) -> None:
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
+        with connect(self.db_path) as conn:
+            pair = conn.execute(
+                """
+                SELECT a.id AS first_id, b.id AS second_id, a.cluster_id
+                FROM topic_variant a
+                JOIN topic_variant b ON b.cluster_id = a.cluster_id AND b.id <> a.id
+                WHERE a.status = 'queued' AND b.status = 'queued'
+                ORDER BY a.cluster_id ASC, a.id ASC, b.id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            self.assertIsNotNone(pair)
+            filler_ids = [
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT tv.id
+                    FROM topic_variant tv
+                    JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                    WHERE tv.cluster_id <> ?
+                    GROUP BY tc.primary_keyword
+                    ORDER BY tv.id ASC
+                    LIMIT 4
+                    """,
+                    (pair["cluster_id"],),
+                ).fetchall()
+            ]
+        self.assertGreaterEqual(len(filler_ids), 4)
+
+        mark_published(self.db_path, pair["first_id"], "https://blog.naver.com/example/old-cluster")
+        for idx, variant_id in enumerate(filler_ids, start=1):
+            mark_published(self.db_path, variant_id, f"https://blog.naver.com/example/recent-filler-{idx}")
+
+        with connect(self.db_path) as conn:
+            conn.execute("UPDATE topic_variant SET status = 'published' WHERE id <> ?", (pair["second_id"],))
+            candidate = select_publish_candidate(conn)
+
+        self.assertIsNone(candidate)
+
+    def test_select_publish_candidate_does_not_recover_bundle_from_previously_published_cluster(self) -> None:
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
+        with connect(self.db_path) as conn:
+            pair = conn.execute(
+                """
+                SELECT a.id AS first_id, b.id AS second_id, a.cluster_id
+                FROM topic_variant a
+                JOIN topic_variant b ON b.cluster_id = a.cluster_id AND b.id <> a.id
+                WHERE a.status = 'queued' AND b.status = 'queued'
+                ORDER BY a.cluster_id ASC, a.id ASC, b.id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            self.assertIsNotNone(pair)
+            conn.execute(
+                """
+                INSERT INTO article_bundle (variant_id, bundle_status, primary_draft_id, selected_image_ids_json, generation_strategy)
+                VALUES (?, 'queued', 999, '[]', 'gpt_web_first')
+                """,
+                (pair["second_id"],),
+            )
+        mark_published(self.db_path, pair["first_id"], "https://blog.naver.com/example/old-cluster-recovery")
+        with connect(self.db_path) as conn:
+            conn.execute("UPDATE topic_variant SET status = 'published' WHERE id <> ?", (pair["second_id"],))
+            candidate = select_publish_candidate(conn)
+
+        self.assertIsNone(candidate)
+
     def test_select_publish_candidate_recovers_stale_rendering_image_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
