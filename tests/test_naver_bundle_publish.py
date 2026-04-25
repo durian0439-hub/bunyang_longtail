@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
+import types
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -117,6 +120,67 @@ Q1. 노부모를 모시면 자동으로 기관추천 특별공급이 되나요?
 최종 판단은 모집공고를 다시 확인하셔야 합니다.
 """
 
+AUCTION_LONG_ARTICLE = """# 경매 체크리스트와 입찰 전 점검, 경매초보는 무엇부터 봐야 할까
+
+경매초보가 첫 물건을 고르는 중이라면, 권리·점유·자금 확인 없이 입찰했다가 보증금 인수나 잔금 공백으로 손해가 커질 수 있습니다.
+
+## 상단 요약
+
+경매 체크리스트는 좋은 물건을 찾는 도구라기보다, 입찰하면 안 되는 물건을 먼저 제외하는 기준입니다.
+공부 순서는 법원경매정보 → 매각물건명세서 → 현황조사서 → 감정평가서 → 등기부등본 → 전입세대열람 순서로 잡으면 흐름을 따라가기 쉽습니다.
+입찰 전에는 권리 인수, 점유자 명도, 잔금·대출·세금·수리비까지 계산한 뒤 가능·보류·회피를 나눠야 합니다.
+
+## 이 글에서 바로 답하는 질문
+
+경매초보가 가장 많이 막히는 지점은 이 물건이 싼 건지보다 입찰해도 되는지입니다.
+일반 매매와 경매는 판단 순서가 다르며, 낙찰 뒤 정해진 기한 안에 잔금을 내야 하고 점유자 문제도 직접 풀어야 할 수 있습니다.
+그래서 경매 체크리스트는 가격표가 아니라 필터입니다.
+
+## 핵심 조건 정리: 무엇부터 봐야 하는지
+
+### 1. 법원경매정보에서 사건 기본값을 봅니다
+
+처음에는 법원경매정보에서 사건번호, 매각기일, 최저가, 보증금, 물건 종류를 먼저 잡는 흐름이 낫습니다.
+최저가가 낮아진 이유가 단순 유찰인지, 권리관계나 점유 문제 때문인지 구분해야 합니다.
+
+### 2. 매각물건명세서에서 인수될 수 있는 권리를 확인합니다
+
+경매초보가 가장 먼저 읽어야 할 서류는 매각물건명세서입니다.
+여기에는 임차인, 점유자, 배당요구 여부, 인수될 수 있는 권리 등이 정리됩니다.
+매수인에게 대항할 수 있는 임차인처럼 보이는 내용은 그냥 넘기면 안 됩니다.
+
+## 헷갈리기 쉬운 예외: 여기서 비용이 커집니다
+
+유찰이 반복되면 최저가가 낮아져 매력적으로 보입니다.
+하지만 유찰 이유가 권리 인수, 점유 갈등, 대출 제한, 건물 하자라면 낮은 가격이 이미 리스크를 반영한 것일 수 있습니다.
+임차인이 있어도 배당요구를 했고 보증금이 배당으로 정리될 가능성이 높다면 큰 문제가 아닐 수 있습니다.
+
+## 실전 예시 시나리오
+
+최저가가 시세보다 낮은 아파트라도 선순위 임차인 보증금이 남거나 점유자가 협조하지 않을 가능성이 크면 초보자는 보류가 맞습니다.
+반대로 권리 인수 위험이 낮고 잔금대출과 명도 비용까지 계산이 끝난 물건이라면 입찰가 상한을 정한 뒤 접근할 수 있습니다.
+
+## 체크리스트
+
+법원경매정보에서 사건번호와 매각기일을 확인했는가
+매각물건명세서에서 인수 권리와 임차인 정보를 확인했는가
+현황조사서와 전입세대열람으로 점유 상태를 맞춰 봤는가
+등기부등본에서 말소기준권리보다 앞선 권리를 확인했는가
+잔금대출, 취득세, 명도 비용까지 현금표에 넣었는가
+
+## FAQ
+
+Q1. 경매초보는 무엇부터 봐야 하나요?
+A. 가격보다 법원경매정보, 매각물건명세서, 점유 상태, 자금 계획 순서로 보시는 것이 안전합니다.
+
+Q2. 유찰이 많으면 좋은 물건인가요?
+A. 아닐 수 있습니다. 왜 유찰됐는지 권리관계와 점유, 대출 가능성까지 확인하셔야 합니다.
+
+## 마무리 결론
+
+경매초보에게 첫 목표는 낙찰이 아니라 손실을 피하는 것입니다. 입찰 전에는 권리, 점유, 자금, 명도 리스크를 한 장 체크리스트로 정리하고 하나라도 설명이 안 되면 보류하는 기준을 먼저 세우셔야 합니다.
+"""
+
 
 class TestNaverBundlePublish(unittest.TestCase):
     def test_auction_publish_bundle_uses_auction_disclaimer_and_tags(self) -> None:
@@ -141,9 +205,38 @@ A. 서류와 현장을 다시 확인해야 합니다.
             meta = json.loads(Path(result.meta_path).read_text(encoding="utf-8"))
             self.assertEqual(meta["domain"], "auction")
             self.assertIn("법원경매정보", result.markdown)
+            self.assertIn("## 경매 입찰 전 체크리스트", result.markdown)
+            self.assertNotIn("청약홈", result.markdown)
+            self.assertNotIn("입주자모집공고", result.markdown)
             self.assertIn("경매권리분석", result.tags)
             self.assertIn("말소기준권리", result.tags)
+            self.assertIn("https://link.coupang.com/a/espLX0", result.markdown)
+            self.assertNotIn("https://link.coupang.com/a/esfszm", result.markdown)
             self.assertNotIn("청약정보", result.tags)
+
+    def test_auction_long_article_with_colon_headings_is_not_replaced_by_cheongyak_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = build_publish_bundle(
+                bundle_id=8,
+                variant_title="경매 체크리스트와 입찰 전 점검, 경매초보는 무엇부터 봐야 할까",
+                article_markdown=AUCTION_LONG_ARTICLE,
+                output_root=Path(temp_dir),
+                image_provider="local",
+                domain="auction",
+            )
+
+            self.assertIn("매각물건명세서에서 인수될 수 있는 권리를 확인합니다", result.markdown)
+            self.assertIn("## 경매 핵심 판단 기준", result.markdown)
+            self.assertIn("## 경매 입찰 전 체크리스트", result.markdown)
+            self.assertNotIn("청약홈", result.markdown)
+            self.assertNotIn("입주자모집공고", result.markdown)
+
+    def test_auction_publish_validation_blocks_cheongyak_terms(self) -> None:
+        with self.assertRaisesRegex(ValueError, "청약 도메인 용어"):
+            target._validate_domain_publish_markdown(
+                "# 경매 글\n\n최종 확인은 청약홈과 입주자모집공고로 합니다.",
+                domain="auction",
+            )
 
     def test_persist_publish_result_marks_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -215,6 +308,128 @@ A. 서류와 현장을 다시 확인해야 합니다.
         kwargs = mocked_publish.call_args.kwargs
         self.assertEqual(kwargs["category_no"], "16")
         self.assertEqual(kwargs["category_name"], "How To 분양")
+
+    def test_publish_bundle_to_naver_blocks_local_fallback_when_gpt_requested(self) -> None:
+        with patch.object(
+            target,
+            "load_bundle_article",
+            return_value={
+                "title": "경매 체크리스트와 입찰 전 점검, 경매초보는 무엇부터 봐야 할까",
+                "article_markdown": AUCTION_LONG_ARTICLE,
+                "related_links": [],
+                "domain": "auction",
+                "variant_id": 1,
+            },
+        ), patch.object(
+            target,
+            "build_publish_bundle",
+            return_value=SimpleNamespace(
+                apt_id="longtail-bundle-gpt-fallback-test",
+                title="경매 체크리스트와 입찰 전 점검 경매초보는 무엇부터 봐야 할까",
+                body_html="<p>본문</p>",
+                images=[],
+                markdown="본문",
+                tags=["경매"],
+                meta_path="/tmp/meta.json",
+                image_provider="local",
+                image_provider_requested="gpt_web",
+                image_provider_fallback_from="gpt_web",
+                image_provider_fallback_reason="timeout",
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "GPT 이미지 생성이 실패"):
+                target.publish_bundle_to_naver(
+                    db_path="test.sqlite3",
+                    bundle_id=1,
+                    output_root="/tmp/out",
+                    mode="private",
+                    image_provider="gpt_web",
+                    category_no="17",
+                    category_name="How To 경매",
+                )
+
+    def test_publish_bundle_to_naver_restores_category_env_after_publish(self) -> None:
+        fake_src = types.ModuleType("src")
+        fake_publisher = types.ModuleType("src.publisher")
+        fake_naver = types.ModuleType("src.publisher.naver_playwright")
+        seen_env: dict[str, str | None] = {}
+
+        def fake_publish(apt_id, title, body_html, images, **kwargs):
+            seen_env["category_no"] = os.environ.get("NAVER_BLOG_CATEGORY_NO")
+            seen_env["category_name"] = os.environ.get("NAVER_BLOG_CATEGORY_NAME")
+            out_dir = Path(kwargs["out"])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{apt_id}.json").write_text(
+                json.dumps({"status": "ok", "current_url": "https://blog.naver.com/example/17"}),
+                encoding="utf-8",
+            )
+            return True
+
+        fake_src.publisher = fake_publisher
+        fake_publisher.naver_playwright = fake_naver
+        fake_naver.publish = fake_publish
+        previous_no = os.environ.get("NAVER_BLOG_CATEGORY_NO")
+        previous_name = os.environ.get("NAVER_BLOG_CATEGORY_NAME")
+        os.environ["NAVER_BLOG_CATEGORY_NO"] = "99"
+        os.environ["NAVER_BLOG_CATEGORY_NAME"] = "Old Category"
+        try:
+            with patch.dict(
+                sys.modules,
+                {
+                    "src": fake_src,
+                    "src.publisher": fake_publisher,
+                    "src.publisher.naver_playwright": fake_naver,
+                },
+            ), patch.object(
+                target,
+                "load_bundle_article",
+                return_value={
+                    "title": "경매 체크리스트와 입찰 전 점검, 경매초보는 무엇부터 봐야 할까",
+                    "article_markdown": AUCTION_LONG_ARTICLE,
+                    "related_links": [],
+                    "domain": "auction",
+                    "variant_id": 1,
+                },
+            ), patch.object(
+                target,
+                "build_publish_bundle",
+                return_value=SimpleNamespace(
+                    apt_id="longtail-bundle-env-test",
+                    title="경매 체크리스트와 입찰 전 점검 경매초보는 무엇부터 봐야 할까",
+                    body_html="<p>본문</p>",
+                    images=[],
+                    markdown="본문",
+                    tags=["경매"],
+                    meta_path="/tmp/meta.json",
+                    image_provider="local",
+                    image_provider_requested="local",
+                    image_provider_fallback_from=None,
+                    image_provider_fallback_reason=None,
+                ),
+            ), patch.object(target, "_persist_publish_result"):
+                result = target.publish_bundle_to_naver(
+                    db_path="test.sqlite3",
+                    bundle_id=1,
+                    output_root="/tmp/out",
+                    mode="private",
+                    category_no="17",
+                    category_name="How To 경매",
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(seen_env["category_no"], "17")
+            self.assertEqual(seen_env["category_name"], "How To 경매")
+            self.assertEqual(os.environ.get("NAVER_BLOG_CATEGORY_NO"), "99")
+            self.assertEqual(os.environ.get("NAVER_BLOG_CATEGORY_NAME"), "Old Category")
+        finally:
+            if previous_no is None:
+                os.environ.pop("NAVER_BLOG_CATEGORY_NO", None)
+            else:
+                os.environ["NAVER_BLOG_CATEGORY_NO"] = previous_no
+            if previous_name is None:
+                os.environ.pop("NAVER_BLOG_CATEGORY_NAME", None)
+            else:
+                os.environ["NAVER_BLOG_CATEGORY_NAME"] = previous_name
 
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -438,6 +653,28 @@ Q1. 바로 신청해도 되나요?
         self.assertIn("Create a Korean summary board", plans[1].prompt_text)
         self.assertIn("Do not use a 4-panel grid", plans[1].prompt_text)
         self.assertIn("public service campaign poster", plans[1].prompt_text)
+
+    def test_build_gpt_publish_image_plans_auction_matches_cheongyak_structure(self) -> None:
+        _, sections = parse_publish_sections(
+            AUCTION_LONG_ARTICLE,
+            title_hint="경매 체크리스트와 입찰 전 점검, 경매초보는 무엇부터 봐야 할까",
+        )
+        plans = _build_gpt_publish_image_plans(
+            "경매 체크리스트와 입찰 전 점검 경매초보는 무엇부터 봐야 할까",
+            sections,
+        )
+        self.assertEqual(len(plans), 11)
+        self.assertEqual(plans[0].slot, "lead")
+        self.assertEqual(plans[1].slot, "30초 결론")
+        self.assertEqual(plans[2].slot, "입찰 전 먼저 확인할 것")
+        self.assertEqual(plans[3].slot, "경매 핵심 판단 기준")
+        self.assertEqual(plans[-1].slot, "경매 입찰 전 체크리스트::before")
+        self.assertEqual(plans[0].image_role, "thumbnail")
+        self.assertTrue(all("청약홈" not in plan.prompt_text for plan in plans))
+        self.assertTrue(all("입주자모집공고" not in plan.prompt_text for plan in plans))
+        self.assertTrue(any("Create a Korean summary board" in plan.prompt_text for plan in plans))
+        self.assertTrue(any("Create a Korean checklist board" in plan.prompt_text for plan in plans))
+        self.assertTrue(any("Create a Korean comparison board" in plan.prompt_text for plan in plans))
 
     def test_build_gpt_publish_image_plans_cashflow_uses_chalkboard_prompt(self) -> None:
         prepared_title = "분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?"

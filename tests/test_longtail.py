@@ -135,6 +135,7 @@ class LongtailPlannerTest(unittest.TestCase):
         headings = [section["heading"] for section in prompt_json["user"]["outline"]]
         self.assertIn("상단 요약", headings)
         self.assertIn("FAQ", headings)
+        self.assertEqual(prompt_json["user"]["content_format"]["name"], "롱테일 정보 전달형 네이버 블로그 글")
         self.assertIn(prompt["primary_keyword"], prompt_json["user"]["title"])
         self.assertEqual(prompt["prompt_version"], "v1")
         self.assertEqual(prompt["route_policy"], "gpt_web_first")
@@ -323,6 +324,33 @@ class LongtailPlannerTest(unittest.TestCase):
             ).fetchone()
 
         self.assertNotEqual(selected["cluster_id"], published["cluster_id"])
+
+    def test_auction_select_publish_candidate_blocks_already_published_semantic_topic(self) -> None:
+        result = replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2, domain="auction")
+        self.assertEqual(result["domain"], "auction")
+
+        with connect(self.db_path) as conn:
+            pair = conn.execute(
+                """
+                SELECT a.id AS first_id, b.id AS second_id
+                FROM topic_variant a
+                JOIN topic_variant b ON b.cluster_id = a.cluster_id AND b.id <> a.id
+                JOIN topic_cluster tc ON tc.id = a.cluster_id
+                WHERE tc.domain = 'auction'
+                ORDER BY a.cluster_id ASC, a.id ASC, b.id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            self.assertIsNotNone(pair)
+
+        mark_published(self.db_path, pair["first_id"], "https://blog.naver.com/example/auction-duplicate-guard")
+        with connect(self.db_path) as conn:
+            conflict = is_recent_publish_conflict(conn, variant_id=pair["second_id"])
+            candidate = select_publish_candidate(conn, domain="auction")
+
+        self.assertIsNotNone(conflict)
+        self.assertEqual(conflict["conflict_reason"], "topic")
+        self.assertTrue(candidate is None or candidate["id"] != pair["second_id"])
 
     def test_select_publish_candidate_scopes_published_title_by_domain(self) -> None:
         with connect(self.db_path) as conn:
@@ -1013,6 +1041,8 @@ class LongtailPlannerTest(unittest.TestCase):
         variant = {"title": "테스트 제목", "angle": "비교형"}
         prompt = build_prompt_package(cluster, variant)
         prompt_text = build_text_prompt(prompt)
+        self.assertIn("롱테일 정보 전달형 네이버 블로그 글", prompt_text)
+        self.assertIn("본문은 정보 전달형 블로그 글처럼", prompt_text)
         self.assertIn("어떤 독자에게 더 적합한지 행동 가이드 1문장", prompt_text)
         self.assertNotIn("이 전략에 맞는지", prompt_text)
 

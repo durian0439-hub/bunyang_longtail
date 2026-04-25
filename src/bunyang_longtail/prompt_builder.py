@@ -6,6 +6,27 @@ from typing import Any
 from .catalog import ANGLE_PROMPTS, AUCTION_DOMAIN, DEFAULT_DOMAIN, NAVER_SEO_SECTIONS
 
 
+LONGTAIL_INFO_BLOG_FORMAT = {
+    "name": "롱테일 정보 전달형 네이버 블로그 글",
+    "purpose": "검색자가 긴 설명을 전부 읽지 않아도 자기 상황에서 무엇을 확인해야 하는지 바로 알게 만드는 정보 전달형 글",
+    "section_role": [
+        "H1 제목: 검색어와 상황을 자연스럽게 포함한 한 문장",
+        "도입 2문단: 검색자가 막힌 상황과 결론을 짧게 제시",
+        "상단 요약: 바로 적용할 결론 3문장",
+        "본문 섹션: 개념 설명보다 확인 순서, 판단 기준, 예외, 실제 사례를 우선",
+        "체크리스트: 단답 나열이 아니라 왜 확인해야 하는지 한 줄 이유 포함",
+        "FAQ: 본문 반복이 아닌 후속 질문 해결",
+        "마무리 결론: 다음 행동 1~3개를 구체적으로 제시",
+    ],
+    "avoid": [
+        "광고성 후기, 강의 홍보, 투자 권유, 수익 보장 문체",
+        "키워드만 반복하는 SEO용 문장",
+        "정의만 길게 설명하는 백과사전식 글",
+        "보고서 메모처럼 개조식만 이어지는 글",
+    ],
+}
+
+
 def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> dict[str, Any]:
     domain = str(cluster.get("domain") or DEFAULT_DOMAIN)
     outline = json.loads(cluster["outline_json"])
@@ -37,7 +58,9 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
         "angle_rule": ANGLE_PROMPTS[variant["angle"]],
         "required_sections": NAVER_SEO_SECTIONS,
         "outline": outline,
+        "content_format": LONGTAIL_INFO_BLOG_FORMAT,
         "writing_rules": [
+            "글 전체는 롱테일 정보 전달형 블로그 글이어야 합니다. 검색자가 궁금해한 한 가지 질문에 먼저 답하고, 확인 순서와 판단 기준을 뒤에서 넓혀 갑니다.",
             "첫 3문장 안에 가능/불가 또는 유리/불리 결론을 넣습니다.",
             "첫 문장은 일반론이나 훈수로 시작하지 말고, 검색자가 처한 상황과 결론을 바로 붙여 씁니다.",
             "사람이 블로그에 직접 쓴 것처럼 써야 합니다. 상담 답변처럼 정답을 내려주는 말투보다, 실제로 많이 헷갈리는 지점을 짚어 주는 설명형 말투를 우선합니다.",
@@ -108,6 +131,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
             "'정리하면', '결론만 말하면', '쉽게 말해'처럼 문장을 열어놓고 설명을 빼먹는 표현이 나오면 실패입니다.",
             "'일시적 2주택 관리 싸움', '출구 규정', '일정 규정', '다음 선택지 규정'처럼 어색한 개념화 표현이 나오면 실패입니다.",
             "상단 요약, 체크리스트, FAQ에 검색어를 억지로 반복하지 않습니다. 같은 키워드는 필요할 때만 자연스럽게 씁니다.",
+            "롱테일 정보 전달형 글이 아니라 광고성 후기, 투자 권유, 강의 홍보, 백과사전식 정의문처럼 보이면 실패입니다.",
             "블로그 글처럼 읽혀야 하며, 보고서 메모나 개조식 답변처럼 보이면 실패입니다.",
         ],
         "style_targets": {
@@ -144,6 +168,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
             "사람이 직접 경험을 정리한 블로그처럼 읽히게 쓰고, AI 요약문처럼 같은 결론을 반복하지 않습니다."
         )
         user_prompt["writing_rules"] = [
+            "글 전체는 롱테일 정보 전달형 블로그 글이어야 합니다. 검색자가 궁금해한 한 가지 경매 질문에 먼저 답하고, 확인 순서와 리스크 판단 기준을 뒤에서 넓혀 갑니다.",
             "첫 3문장 안에 입찰 가능/보류/회피 또는 먼저 확인할 결론을 넣습니다.",
             "첫 문장은 경매 일반론이 아니라 검색자가 처한 상황과 결론을 바로 붙여 씁니다.",
             "법률·세무·대출·투자 수익을 확정적으로 단정하지 말고, 확인해야 할 서류와 판단 순서를 중심으로 설명합니다.",
