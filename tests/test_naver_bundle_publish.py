@@ -650,7 +650,7 @@ A. 서류와 현장을 다시 확인해야 합니다.
                             "status": "ok",
                             "project": "longtail",
                             "clip_package_path": "/tmp/longtail.naver_clip.json",
-                            "naver_clip_upload": {"status": "private_saved"},
+                            "naver_clip_upload": {"status": "public_saved", "visibility": "public"},
                         },
                         ensure_ascii=False,
                     ),
@@ -667,6 +667,7 @@ A. 서류와 현장을 다시 확인해야 합니다.
                     "LONGTAIL_VIDEO_UPLOAD": "1",
                     "LONGTAIL_VIDEO_TTS_ENABLED": "1",
                     "LONGTAIL_NAVER_CLIP_UPLOAD": "1",
+                    "LONGTAIL_NAVER_CLIP_VISIBILITY": "public",
                     "LONGTAIL_VIDEO_MAKER_ROOT": "/home/kj/app/video_maker",
                 },
             ), patch.dict(
@@ -721,6 +722,8 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertIn("--skip-youtube", seen_cmd)
         self.assertIn("--with-tts", seen_cmd)
         self.assertIn("--upload-naver-clip", seen_cmd)
+        self.assertIn("--naver-clip-visibility", seen_cmd)
+        self.assertEqual(seen_cmd[seen_cmd.index("--naver-clip-visibility") + 1], "public")
 
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -2794,7 +2794,10 @@ def _maybe_publish_longtail_video(
         if _env_flag("LONGTAIL_VIDEO_TTS_STRICT", default=False):
             cmd.append("--tts-strict")
     if _env_flag("LONGTAIL_NAVER_CLIP_UPLOAD", default=True):
-        cmd.extend(["--upload-naver-clip", "--naver-clip-visibility", "private"])
+        clip_visibility = _clean(os.getenv("LONGTAIL_NAVER_CLIP_VISIBILITY")).lower() or "public"
+        if clip_visibility not in {"private", "public"}:
+            clip_visibility = "public"
+        cmd.extend(["--upload-naver-clip", "--naver-clip-visibility", clip_visibility])
 
     proc = subprocess.run(
         cmd,
