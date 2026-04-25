@@ -271,7 +271,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIsNotNone(second)
         self.assertNotEqual(first["id"], second["id"])
 
-    def test_select_publish_candidate_skips_recent_cluster_and_keyword(self) -> None:
+    def test_select_publish_candidate_skips_recent_same_topic_only(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
@@ -302,7 +302,36 @@ class LongtailPlannerTest(unittest.TestCase):
             ).fetchone()
 
         self.assertNotEqual(selected["cluster_id"], published["cluster_id"])
-        self.assertNotEqual(selected["primary_keyword"], published["primary_keyword"])
+
+    def test_select_publish_candidate_allows_primary_keyword_reuse_for_different_topic(self) -> None:
+        with connect(self.db_path) as conn:
+            variant_ids: list[int] = []
+            for idx in range(1, 3):
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES (?, '테스트', '김치', '보조', '30대 맞벌이', '계산', ?, '비교', 100, '[]', '{}')
+                    """,
+                    (f"same-keyword-different-topic-{idx}", f"상황{idx}"),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', ?, ?, 100, '{}', 'queued')
+                    """,
+                    (cluster_id, f"same-keyword-different-topic-variant-{idx}", f"김치 테스트 {idx}", f"same-keyword-different-topic-{idx}"),
+                )
+                variant_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        mark_published(self.db_path, variant_ids[0], "https://blog.naver.com/example/same-keyword")
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["id"], variant_ids[1])
 
     def test_select_publish_candidate_allows_angle_reuse_when_other_guards_do_not_match(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
@@ -354,7 +383,7 @@ class LongtailPlannerTest(unittest.TestCase):
 
         self.assertNotEqual(selected["primary_keyword"], published["primary_keyword"])
 
-    def test_is_recent_publish_conflict_detects_recent_cluster_or_keyword(self) -> None:
+    def test_is_recent_publish_conflict_detects_recent_same_topic_or_title(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
         with connect(self.db_path) as conn:
@@ -387,7 +416,7 @@ class LongtailPlannerTest(unittest.TestCase):
             conflict = is_recent_publish_conflict(conn, variant_id=pair['second_id'])
 
         self.assertIsNotNone(conflict)
-        self.assertIn(conflict['conflict_reason'], {'cluster', 'primary_keyword'})
+        self.assertIn(conflict['conflict_reason'], {'topic', 'title'})
 
     def test_select_publish_candidate_weighted_random_falls_back_to_drafted_when_queued_conflicts(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
@@ -521,6 +550,40 @@ class LongtailPlannerTest(unittest.TestCase):
 
         self.assertIsNone(candidate)
 
+    def test_select_publish_candidate_allows_previously_published_primary_keyword_when_topic_differs(self) -> None:
+        with connect(self.db_path) as conn:
+            variant_ids: list[int] = []
+            for idx, primary_keyword in enumerate(["중복키워드", "중복키워드", "필러1", "필러2", "필러3", "필러4"], start=1):
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES (?, '테스트', ?, '보조', '30대 맞벌이', '계산', ?, '비교', 100, '[]', '{}')
+                    """,
+                    (f"dup-primary-{idx}", primary_keyword, f"상황{idx}"),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', ?, ?, 100, '{}', 'queued')
+                    """,
+                    (cluster_id, f"dup-primary-variant-{idx}", f"{primary_keyword} 테스트 {idx}", f"dup-primary-{idx}"),
+                )
+                variant_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        first_id, second_id, *filler_ids = variant_ids
+        mark_published(self.db_path, first_id, "https://blog.naver.com/example/old-primary-keyword")
+        for idx, variant_id in enumerate(filler_ids, start=1):
+            mark_published(self.db_path, variant_id, f"https://blog.naver.com/example/recent-primary-filler-{idx}")
+
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["id"], second_id)
+
     def test_select_publish_candidate_does_not_recover_bundle_from_previously_published_cluster(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
         with connect(self.db_path) as conn:
@@ -545,6 +608,73 @@ class LongtailPlannerTest(unittest.TestCase):
         mark_published(self.db_path, pair["first_id"], "https://blog.naver.com/example/old-cluster-recovery")
         with connect(self.db_path) as conn:
             conn.execute("UPDATE topic_variant SET status = 'published' WHERE id <> ?", (pair["second_id"],))
+            candidate = select_publish_candidate(conn)
+
+        self.assertIsNone(candidate)
+
+    def test_select_publish_candidate_recovers_bundle_when_only_primary_keyword_matches(self) -> None:
+        with connect(self.db_path) as conn:
+            variant_ids: list[int] = []
+            for idx in range(1, 3):
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES (?, '테스트', '중복키워드', '보조', '30대 맞벌이', '계산', ?, '비교', 100, '[]', '{}')
+                    """,
+                    (f"dup-primary-recovery-{idx}", f"상황{idx}"),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', ?, ?, 100, '{}', 'queued')
+                    """,
+                    (cluster_id, f"dup-primary-recovery-variant-{idx}", f"중복키워드 테스트 {idx}", f"dup-primary-recovery-{idx}"),
+                )
+                variant_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            conn.execute(
+                """
+                INSERT INTO article_bundle (variant_id, bundle_status, primary_draft_id, selected_image_ids_json, generation_strategy)
+                VALUES (?, 'queued', 999, '[]', 'gpt_web_first')
+                """,
+                (variant_ids[1],),
+            )
+
+        mark_published(self.db_path, variant_ids[0], "https://blog.naver.com/example/old-primary-keyword-recovery")
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["id"], variant_ids[1])
+        self.assertIsNotNone(candidate.get("bundle_id"))
+
+    def test_select_publish_candidate_blocks_exact_title_republish(self) -> None:
+        with connect(self.db_path) as conn:
+            variant_ids: list[int] = []
+            for idx in range(1, 3):
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES (?, '테스트', ?, '보조', '30대 맞벌이', '계산', ?, '비교', 100, '[]', '{}')
+                    """,
+                    (f"exact-title-{idx}", f"키워드{idx}", f"상황{idx}"),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', '완전히 같은 제목', ?, 100, '{}', 'queued')
+                    """,
+                    (cluster_id, f"exact-title-variant-{idx}", f"exact-title-{idx}"),
+                )
+                variant_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        mark_published(self.db_path, variant_ids[0], "https://blog.naver.com/example/exact-title")
+        with connect(self.db_path) as conn:
             candidate = select_publish_candidate(conn)
 
         self.assertIsNone(candidate)

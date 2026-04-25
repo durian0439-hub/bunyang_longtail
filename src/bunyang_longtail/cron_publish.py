@@ -55,7 +55,13 @@ def is_recent_publish_conflict(
 ) -> dict[str, Any] | None:
     query = """
         WITH candidate AS (
-            SELECT tv.id AS variant_id, tc.id AS cluster_id, tc.primary_keyword
+            SELECT
+                tv.id AS variant_id,
+                tv.title AS variant_title,
+                tv.slug AS variant_slug,
+                tc.id AS cluster_id,
+                tc.semantic_key,
+                tc.primary_keyword
             FROM topic_variant tv
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE tv.id = ?
@@ -66,7 +72,10 @@ def is_recent_publish_conflict(
                 ph.variant_id,
                 ph.published_title,
                 ph.published_at,
+                tv.title AS variant_title,
+                tv.slug AS variant_slug,
                 tc.id AS cluster_id,
+                tc.semantic_key,
                 tc.primary_keyword,
                 ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
             FROM publish_history ph
@@ -80,8 +89,8 @@ def is_recent_publish_conflict(
             rp.published_title,
             rp.published_at,
             CASE
-                WHEN rp.cluster_id = c.cluster_id THEN 'cluster'
-                WHEN rp.primary_keyword = c.primary_keyword THEN 'primary_keyword'
+                WHEN rp.cluster_id = c.cluster_id OR rp.semantic_key = c.semantic_key THEN 'topic'
+                WHEN rp.variant_title = c.variant_title OR rp.variant_slug = c.variant_slug THEN 'title'
                 ELSE 'unknown'
             END AS conflict_reason
         FROM candidate c
@@ -89,7 +98,9 @@ def is_recent_publish_conflict(
           ON rp.rn <= ?
          AND (
               rp.cluster_id = c.cluster_id
-              OR rp.primary_keyword = c.primary_keyword
+              OR rp.semantic_key = c.semantic_key
+              OR rp.variant_title = c.variant_title
+              OR rp.variant_slug = c.variant_slug
          )
         ORDER BY rp.publish_id DESC
         LIMIT 1
@@ -112,7 +123,10 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
         WITH recent_published AS (
             SELECT
                 ph.variant_id,
+                tv.title AS variant_title,
+                tv.slug AS variant_slug,
                 tc.id AS cluster_id,
+                tc.semantic_key,
                 tc.primary_keyword,
                 ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
             FROM publish_history ph
@@ -120,8 +134,12 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
         ),
-        published_clusters AS (
-            SELECT DISTINCT tc.id AS cluster_id
+        published_topics AS (
+            SELECT DISTINCT
+                tc.id AS cluster_id,
+                tc.semantic_key,
+                tv.title AS variant_title,
+                tv.slug AS variant_slug
             FROM publish_history ph
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
@@ -146,8 +164,11 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
           {exclude_sql}
           AND NOT EXISTS (
               SELECT 1
-              FROM published_clusters pc
-              WHERE pc.cluster_id = tc.id
+              FROM published_topics pt
+              WHERE pt.cluster_id = tc.id
+                 OR pt.semantic_key = tc.semantic_key
+                 OR pt.variant_title = tv.title
+                 OR pt.variant_slug = tv.slug
           )
           AND NOT EXISTS (
               SELECT 1
@@ -155,7 +176,9 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
               WHERE rp.rn <= ?
                 AND (
                     rp.cluster_id = tc.id
-                    OR rp.primary_keyword = tc.primary_keyword
+                    OR rp.semantic_key = tc.semantic_key
+                    OR rp.variant_title = tv.title
+                    OR rp.variant_slug = tv.slug
                 )
           )
         ORDER BY ab.id ASC
@@ -169,7 +192,10 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
         WITH recent_published AS (
             SELECT
                 ph.variant_id,
+                tv.title AS variant_title,
+                tv.slug AS variant_slug,
                 tc.id AS cluster_id,
+                tc.semantic_key,
                 tc.primary_keyword,
                 ROW_NUMBER() OVER (ORDER BY ph.id DESC) AS rn
             FROM publish_history ph
@@ -177,8 +203,12 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
             WHERE ph.channel = 'naver_blog'
         ),
-        published_clusters AS (
-            SELECT DISTINCT tc.id AS cluster_id
+        published_topics AS (
+            SELECT DISTINCT
+                tc.id AS cluster_id,
+                tc.semantic_key,
+                tv.title AS variant_title,
+                tv.slug AS variant_slug
             FROM publish_history ph
             JOIN topic_variant tv ON tv.id = ph.variant_id
             JOIN topic_cluster tc ON tc.id = tv.cluster_id
@@ -201,8 +231,11 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
           )
           AND NOT EXISTS (
               SELECT 1
-              FROM published_clusters pc
-              WHERE pc.cluster_id = tc.id
+              FROM published_topics pt
+              WHERE pt.cluster_id = tc.id
+                 OR pt.semantic_key = tc.semantic_key
+                 OR pt.variant_title = tv.title
+                 OR pt.variant_slug = tv.slug
           )
           AND NOT EXISTS (
               SELECT 1
@@ -210,7 +243,9 @@ def select_publish_candidate(conn: Any, *, excluded_variant_ids: Collection[int]
               WHERE rp.rn <= ?
                 AND (
                     rp.cluster_id = tc.id
-                    OR rp.primary_keyword = tc.primary_keyword
+                    OR rp.semantic_key = tc.semantic_key
+                    OR rp.variant_title = tv.title
+                    OR rp.variant_slug = tv.slug
                 )
           )
     """
