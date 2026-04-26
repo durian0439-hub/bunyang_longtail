@@ -668,6 +668,8 @@ A. 서류와 현장을 다시 확인해야 합니다.
                     "LONGTAIL_VIDEO_TTS_ENABLED": "1",
                     "LONGTAIL_NAVER_CLIP_UPLOAD": "1",
                     "LONGTAIL_NAVER_CLIP_VISIBILITY": "public",
+                    "LONGTAIL_TIKTOK_UPLOAD": "1",
+                    "LONGTAIL_TIKTOK_PRIVACY_LEVEL": "SELF_ONLY",
                     "LONGTAIL_VIDEO_MAKER_ROOT": "/home/kj/app/video_maker",
                 },
             ), patch.dict(
@@ -724,6 +726,8 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertIn("--upload-naver-clip", seen_cmd)
         self.assertIn("--naver-clip-visibility", seen_cmd)
         self.assertEqual(seen_cmd[seen_cmd.index("--naver-clip-visibility") + 1], "public")
+        self.assertIn("--upload-tiktok", seen_cmd)
+        self.assertEqual(seen_cmd[seen_cmd.index("--tiktok-privacy-level") + 1], "SELF_ONLY")
 
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -2790,6 +2790,15 @@ def _maybe_publish_longtail_video(
     ]
     if not _env_flag("LONGTAIL_YOUTUBE_UPLOAD", default=True):
         cmd.append("--skip-youtube")
+    if _env_flag("LONGTAIL_TIKTOK_UPLOAD", default=False):
+        cmd.extend([
+            "--upload-tiktok",
+            "--tiktok-privacy-level",
+            _clean(os.getenv("LONGTAIL_TIKTOK_PRIVACY_LEVEL")).upper() or "SELF_ONLY",
+        ])
+        token_file = _clean(os.getenv("LONGTAIL_TIKTOK_ACCESS_TOKEN_FILE"))
+        if token_file:
+            cmd.extend(["--tiktok-access-token-file", token_file])
     if _env_flag("LONGTAIL_VIDEO_TTS_ENABLED", default=True):
         cmd.append("--with-tts")
         if _env_flag("LONGTAIL_VIDEO_TTS_STRICT", default=False):
