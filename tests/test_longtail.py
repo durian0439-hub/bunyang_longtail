@@ -383,6 +383,44 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(conflict["conflict_reason"], "topic")
         self.assertTrue(candidate is None or candidate["id"] != pair["second_id"])
 
+    def test_auction_select_publish_candidate_prefers_recent_family_diversity(self) -> None:
+        with connect(self.db_path) as conn:
+            variant_ids = {}
+            for idx, (family, keyword, intent) in enumerate(
+                [
+                    ("경매기초", "경매 체크리스트", "가능여부"),
+                    ("권리분석", "말소기준권리", "실수방지"),
+                ],
+                start=1,
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        domain, semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES ('auction', ?, ?, ?, '보조', '경매초보', ?, '공부 순서', '비교', 100, '[]', '{}')
+                    """,
+                    (f"auction-diversity-{idx}", family, keyword, intent),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', ?, ?, 100, '{}', 'queued')
+                    """,
+                    (cluster_id, f"auction-diversity-variant-{idx}", f"{keyword} 테스트", f"auction-diversity-{idx}"),
+                )
+                variant_ids[family] = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        mark_published(self.db_path, variant_ids["경매기초"], "https://blog.naver.com/example/auction-family-diversity")
+
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn, domain="auction")
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["family"], "권리분석")
+        self.assertEqual(candidate["primary_keyword"], "말소기준권리")
+
     def test_select_publish_candidate_scopes_published_title_by_domain(self) -> None:
         with connect(self.db_path) as conn:
             for domain, semantic_key, variant_key in [

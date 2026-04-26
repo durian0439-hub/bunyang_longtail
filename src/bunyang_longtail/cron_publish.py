@@ -172,6 +172,66 @@ def _is_blocked_by_published_topic(row: Mapping[str, Any], blocks: Mapping[str, 
     )
 
 
+def _recent_diversity_blocks(conn: Any, *, domain: str, guard_count: int = 5) -> dict[str, set[str]]:
+    rows = fetch_all(
+        conn,
+        """
+        SELECT
+            tc.family,
+            tc.primary_keyword,
+            tc.search_intent,
+            tv.angle
+        FROM publish_history ph
+        JOIN topic_variant tv ON tv.id = ph.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE ph.channel = 'naver_blog'
+          AND tc.domain = ?
+        ORDER BY ph.id DESC
+        LIMIT ?
+        """,
+        (domain, guard_count),
+    )
+    blocks = {"families": set(), "primary_keywords": set(), "intents": set(), "angles": set()}
+    for row in rows:
+        if row["family"]:
+            blocks["families"].add(str(row["family"]))
+        if row["primary_keyword"]:
+            blocks["primary_keywords"].add(str(row["primary_keyword"]))
+        if row["search_intent"]:
+            blocks["intents"].add(str(row["search_intent"]))
+        if row["angle"]:
+            blocks["angles"].add(str(row["angle"]))
+    return blocks
+
+
+def _diversity_filtered_rows(rows: list[dict[str, Any]], blocks: Mapping[str, set[str]], *, domain: str) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    if domain == "auction":
+        stages = (
+            ("family", "primary_keyword", "search_intent"),
+            ("family", "primary_keyword"),
+            ("primary_keyword",),
+        )
+    else:
+        stages = (("family", "primary_keyword"), ("primary_keyword",))
+    block_key = {
+        "family": "families",
+        "primary_keyword": "primary_keywords",
+        "search_intent": "intents",
+        "angle": "angles",
+    }
+    for stage in stages:
+        filtered = [
+            row
+            for row in rows
+            if all(str(row.get(field) or "") not in blocks.get(block_key[field], set()) for field in stage)
+        ]
+        if filtered:
+            return filtered
+    return rows
+
+
 def select_publish_candidate(
     conn: Any,
     *,
@@ -183,6 +243,8 @@ def select_publish_candidate(
     excluded_ids = {int(variant_id) for variant_id in (excluded_variant_ids or [])}
     published_blocks = _published_topic_blocks(conn, domain=domain)
 
+    diversity_blocks = _recent_diversity_blocks(conn, domain=domain)
+
     recovery_query = """
         SELECT
             tv.id,
@@ -190,11 +252,14 @@ def select_publish_candidate(
             tv.slug,
             tv.status,
             tv.use_count,
+            tv.angle,
             tc.priority,
             tc.id AS cluster_id,
             tc.domain,
             tc.semantic_key,
+            tc.family,
             tc.primary_keyword,
+            tc.search_intent,
             ab.id AS bundle_id,
             1 AS recovery_priority
         FROM article_bundle ab
@@ -206,13 +271,17 @@ def select_publish_candidate(
           AND ab.primary_thumbnail_id IS NULL
         ORDER BY ab.id ASC
     """
+    recovery_rows = []
     for recovery in fetch_all(conn, recovery_query, (domain,)):
         row = dict(recovery)
         if int(row["id"]) in excluded_ids:
             continue
         if _is_blocked_by_published_topic(row, published_blocks):
             continue
-        return row
+        recovery_rows.append(row)
+    diverse_recovery_rows = _diversity_filtered_rows(recovery_rows, diversity_blocks, domain=domain)
+    if diverse_recovery_rows:
+        return diverse_recovery_rows[0]
 
     query = """
         SELECT
@@ -221,11 +290,14 @@ def select_publish_candidate(
             tv.slug,
             tv.status,
             tv.use_count,
+            tv.angle,
             tc.priority,
             tc.id AS cluster_id,
             tc.domain,
             tc.semantic_key,
-            tc.primary_keyword
+            tc.family,
+            tc.primary_keyword,
+            tc.search_intent
         FROM topic_variant tv
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
         WHERE tc.domain = ?
@@ -241,6 +313,7 @@ def select_publish_candidate(
         rows.append(row)
     if not rows:
         return None
+    rows = _diversity_filtered_rows(rows, diversity_blocks, domain=domain)
 
     weighted_rows: list[dict[str, Any]] = []
     weights: list[float] = []
