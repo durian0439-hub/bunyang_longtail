@@ -719,7 +719,7 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertIn("longtail", seen_cmd)
         self.assertIn("--blog-category", seen_cmd)
         self.assertIn("How To 경매", seen_cmd)
-        self.assertIn("--skip-youtube", seen_cmd)
+        self.assertNotIn("--skip-youtube", seen_cmd)
         self.assertIn("--with-tts", seen_cmd)
         self.assertIn("--upload-naver-clip", seen_cmd)
         self.assertIn("--naver-clip-visibility", seen_cmd)

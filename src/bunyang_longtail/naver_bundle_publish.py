@@ -2786,9 +2786,10 @@ def _maybe_publish_longtail_video(
         blog_category,
         "--clip-topic",
         blog_category,
-        "--skip-youtube",
         "--skip-comment",
     ]
+    if not _env_flag("LONGTAIL_YOUTUBE_UPLOAD", default=True):
+        cmd.append("--skip-youtube")
     if _env_flag("LONGTAIL_VIDEO_TTS_ENABLED", default=True):
         cmd.append("--with-tts")
         if _env_flag("LONGTAIL_VIDEO_TTS_STRICT", default=False):
