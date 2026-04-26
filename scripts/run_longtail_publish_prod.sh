@@ -13,11 +13,12 @@ export LONGTAIL_LOAN_NAVER_CATEGORY_NAME="${LONGTAIL_LOAN_NAVER_CATEGORY_NAME:-ë
 export LONGTAIL_GPT_IMAGE_SPEED="${LONGTAIL_GPT_IMAGE_SPEED:-fast}"
 export NAVER_BLOG_GPT_IMAGE_MAX_ASSETS="${NAVER_BLOG_GPT_IMAGE_MAX_ASSETS:-11}"
 export NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC="${NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC:-480}"
+export LONGTAIL_PUBLISH_MODE="${LONGTAIL_PUBLISH_MODE:-publish}"
 export LONGTAIL_VIDEO_UPLOAD="${LONGTAIL_VIDEO_UPLOAD:-1}"
 export LONGTAIL_VIDEO_TTS_ENABLED="${LONGTAIL_VIDEO_TTS_ENABLED:-1}"
 export LONGTAIL_NAVER_CLIP_UPLOAD="${LONGTAIL_NAVER_CLIP_UPLOAD:-1}"
 export LONGTAIL_NAVER_CLIP_VISIBILITY="${LONGTAIL_NAVER_CLIP_VISIBILITY:-public}"
-export LONGTAIL_YOUTUBE_PRIVACY_STATUS="${LONGTAIL_YOUTUBE_PRIVACY_STATUS:-private}"
+export LONGTAIL_YOUTUBE_PRIVACY_STATUS="${LONGTAIL_YOUTUBE_PRIVACY_STATUS:-${LONGTAIL_YOUTUBE_PRIVACY:-private}}"
 export LONGTAIL_VIDEO_MAKER_ROOT="${LONGTAIL_VIDEO_MAKER_ROOT:-/home/kj/app/video_maker}"
 
 PROD_ROOT="${LONGTAIL_PROD_ROOT:-/home/kj/app/bunyang_longtail/prod}"
@@ -107,6 +108,9 @@ DB_PATH = os.environ['LONGTAIL_PROD_DB_PATH']
 OUTPUT_BASE = Path(os.environ['LONGTAIL_NAVER_OUTPUT_BASE'])
 OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
 MAX_VARIANT_ATTEMPTS = 3
+PUBLISH_MODE = os.environ.get('LONGTAIL_PUBLISH_MODE', 'publish').strip().lower() or 'publish'
+if PUBLISH_MODE not in {'draft', 'private', 'publish'}:
+    raise SystemExit(f"invalid LONGTAIL_PUBLISH_MODE: {PUBLISH_MODE}")
 
 DOMAIN_CONFIGS = [
     {
@@ -161,7 +165,7 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
         'scripts/publish_bundle_to_naver.py',
         '--db', DB_PATH,
         '--bundle-id', str(bundle_id),
-        '--mode', 'publish',
+        '--mode', PUBLISH_MODE,
         '--image-provider', 'gpt_web',
         '--category-name', category_name,
         '--output-root', str(out_dir),
@@ -180,6 +184,7 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
         'status': 'published',
         'domain': domain,
         'bundle_id': bundle_id,
+        'publish_mode': PUBLISH_MODE,
         'output_root': str(out_dir),
     }
 
