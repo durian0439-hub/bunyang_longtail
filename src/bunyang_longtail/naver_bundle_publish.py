@@ -5,6 +5,7 @@ import json
 import os
 import re
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -2718,6 +2719,44 @@ def _persist_publish_result(db_path: str | Path, article: dict[str, Any], result
     mark_published(db_path, int(article["variant_id"]), publish_url, published_title=published_title)
 
 
+def _persist_video_publish_result(
+    db_path: str | Path,
+    *,
+    bundle_id: int,
+    variant_id: int,
+    video_result: dict[str, Any],
+) -> None:
+    from .database import connect
+
+    with connect(db_path) as conn:
+        try:
+            row = conn.execute(
+                """
+                SELECT id, result_json
+                FROM publish_history
+                WHERE bundle_id = ? AND variant_id = ?
+                ORDER BY COALESCE(published_at, created_at) DESC, id DESC
+                LIMIT 1
+                """,
+                (bundle_id, variant_id),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return
+        if row is None:
+            return
+        try:
+            payload = json.loads(row["result_json"] or "{}")
+            if not isinstance(payload, dict):
+                payload = {}
+        except Exception:
+            payload = {}
+        payload["video_publish"] = video_result
+        conn.execute(
+            "UPDATE publish_history SET result_json = ? WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False), row["id"]),
+        )
+
+
 def _env_flag(name: str, *, default: bool = False) -> bool:
     raw = str(os.getenv(name, "1" if default else "0")).strip().lower()
     return raw in {"1", "true", "yes", "on"}
@@ -2949,4 +2988,11 @@ def publish_bundle_to_naver(
         publish_result=result,
         category_name=category_name,
     )
+    if result.get("ok"):
+        _persist_video_publish_result(
+            db_path,
+            bundle_id=bundle_id,
+            variant_id=int(article["variant_id"]),
+            video_result=result["video_publish"],
+        )
     return result

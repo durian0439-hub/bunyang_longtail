@@ -23,6 +23,9 @@ export LONGTAIL_YOUTUBE_PRIVACY_STATUS="${LONGTAIL_YOUTUBE_PRIVACY_STATUS:-${LON
 export LONGTAIL_TIKTOK_UPLOAD="${LONGTAIL_TIKTOK_UPLOAD:-0}"
 export LONGTAIL_TIKTOK_PRIVACY_LEVEL="${LONGTAIL_TIKTOK_PRIVACY_LEVEL:-SELF_ONLY}"
 export LONGTAIL_VIDEO_MAKER_ROOT="${LONGTAIL_VIDEO_MAKER_ROOT:-/home/kj/app/video_maker}"
+export LONGTAIL_MEDIA_CLEANUP_ENABLED="${LONGTAIL_MEDIA_CLEANUP_ENABLED:-1}"
+export LONGTAIL_MEDIA_RETENTION_DAYS="${LONGTAIL_MEDIA_RETENTION_DAYS:-3}"
+export LONGTAIL_BLOG_PUBLISH_OUTPUT_DIR="${LONGTAIL_BLOG_PUBLISH_OUTPUT_DIR:-/home/kj/app/bunyang/blog-cheongyak-automation/outputs/publish_longtail}"
 
 PROD_ROOT="${LONGTAIL_PROD_ROOT:-/home/kj/app/bunyang_longtail/prod}"
 CODE_ROOT="${LONGTAIL_PROD_CODE_ROOT:-$PROD_ROOT/runtime/current}"
@@ -297,5 +300,14 @@ _print_json({'status': 'cron_domain_summary', 'results': results})
 if any(item.get('status') == 'failed' for item in results):
     raise SystemExit(1)
 PY
+
+  if [[ "${LONGTAIL_MEDIA_CLEANUP_ENABLED}" == "1" ]]; then
+    /usr/bin/python3 scripts/cleanup_published_media.py \
+      --db "$DB_PATH" \
+      --output-base "$OUTPUT_BASE" \
+      --days "$LONGTAIL_MEDIA_RETENTION_DAYS" \
+      --blog-output-dir "$LONGTAIL_BLOG_PUBLISH_OUTPUT_DIR"
+  fi
+
   echo "[$(date '+%F %T')] done: longtail publish prod"
 } >> "$LOG_FILE" 2>&1
