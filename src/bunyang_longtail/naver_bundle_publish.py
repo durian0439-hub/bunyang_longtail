@@ -2542,6 +2542,24 @@ def _normalize_faq_question_line(line: str) -> str:
     return re.sub(r"^###\s*", "", str(line or "").strip())
 
 
+def _insert_video_marker_after_lead_image(markdown: str, video_index: int = 1) -> str:
+    lines = str(markdown or "").splitlines()
+    marker = f"[[VIDEO:{video_index}]]"
+    if marker in lines:
+        return str(markdown or "")
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"\[\[IMAGE:\d+\]\]", line.strip()):
+            insert_at = index + 1
+            while insert_at < len(lines) and not lines[insert_at].strip():
+                insert_at += 1
+            lines[insert_at:insert_at] = ["", marker, ""]
+            return "\n".join(lines).strip() + "\n"
+    if lines and lines[0].startswith("# "):
+        lines[1:1] = ["", marker, ""]
+        return "\n".join(lines).strip() + "\n"
+    return f"{marker}\n\n{str(markdown or '').strip()}\n"
+
+
 def markdown_to_html(markdown: str) -> str:
     html_lines: list[str] = [
         "<style>",
@@ -2567,7 +2585,7 @@ def markdown_to_html(markdown: str) -> str:
             html_lines.append(f"<h3>{_emphasize_publish_text(_normalize_faq_question_line(line))}</h3>")
         elif line == "---":
             html_lines.append("<hr>")
-        elif re.fullmatch(r"\[\[IMAGE:\d+\]\]", line):
+        elif re.fullmatch(r"\[\[(?:IMAGE|VIDEO):\d+\]\]", line):
             html_lines.append(f"<p>{line}</p>")
         elif line.startswith("- "):
             html_lines.append(f"<p>• {_emphasize_publish_text(line[2:].strip())}</p>")
@@ -2786,11 +2804,98 @@ def _longtail_blog_category(domain: str | None, fallback: str | None = None) -> 
     return "How To 분양"
 
 
+def _render_longtail_video_for_blog(
+    *,
+    publish_bundle: PublishBundle,
+    category_name: str | None,
+) -> dict[str, Any]:
+    if not _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=False):
+        return {"status": "skipped", "reason": "LONGTAIL_BLOG_INLINE_VIDEO disabled"}
+    if not _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False):
+        return {"status": "skipped", "reason": "LONGTAIL_VIDEO_UPLOAD disabled"}
+
+    meta_path = Path(publish_bundle.meta_path).resolve()
+    video_maker_root = Path(os.getenv("LONGTAIL_VIDEO_MAKER_ROOT", "/home/kj/app/video_maker")).resolve()
+    output_dir = meta_path.parent / "video"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    domain = ""
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        domain = _clean(meta.get("domain"))
+    except Exception:
+        domain = ""
+
+    blog_category = _longtail_blog_category(domain, category_name)
+    cmd = [
+        _longtail_video_python(video_maker_root),
+        "-m",
+        "src.cli.publish_project_video",
+        "--project",
+        "longtail",
+        "--source",
+        str(meta_path),
+        "--output-dir",
+        str(output_dir),
+        "--privacy",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_PRIVACY_STATUS")) or "private",
+        "--client-secrets",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_CLIENT_SECRETS")) or "/home/kj/app/openclaw_youtube/client_secrets.json",
+        "--token-file",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_TOKEN_FILE")) or str(video_maker_root / "token.pickle"),
+        "--expected-channel-id",
+        _clean(os.getenv("LONGTAIL_YOUTUBE_EXPECTED_CHANNEL_ID")) or "UCjuIOmk641DSX8u_gkPYeuA",
+        "--blog-home-url",
+        _clean(os.getenv("LONGTAIL_BLOG_HOME_URL")) or "https://blog.naver.com/bear0439",
+        "--blog-category",
+        blog_category,
+        "--clip-topic",
+        blog_category,
+        "--skip-comment",
+        "--skip-youtube",
+    ]
+    if _env_flag("LONGTAIL_VIDEO_TTS_ENABLED", default=True):
+        cmd.append("--with-tts")
+        if _env_flag("LONGTAIL_VIDEO_TTS_STRICT", default=False):
+            cmd.append("--tts-strict")
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(video_maker_root),
+        env={**os.environ, "PYTHONPATH": "."},
+        capture_output=True,
+        text=True,
+        timeout=int(str(os.getenv("LONGTAIL_VIDEO_TIMEOUT_SEC", "3600")).strip() or "3600"),
+    )
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode != 0:
+        payload = {
+            "status": "error",
+            "returncode": proc.returncode,
+            "stdout_tail": stdout[-4000:],
+            "stderr_tail": stderr[-4000:],
+            "output_dir": str(output_dir),
+        }
+        if _env_flag("LONGTAIL_BLOG_INLINE_VIDEO_STRICT", default=False):
+            raise RuntimeError("longtail_blog_inline_video_render_failed\n" + json.dumps(payload, ensure_ascii=False, indent=2))
+        return payload
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        return {"status": "error", "reason": "missing video render stdout", "output_dir": str(output_dir)}
+    result = json.loads(lines[-1])
+    result["status"] = result.get("status") or "ok"
+    result["output_dir"] = str(output_dir)
+    result["blog_category"] = blog_category
+    return result
+
+
 def _maybe_publish_longtail_video(
     *,
     publish_bundle: PublishBundle,
     publish_result: dict[str, Any],
     category_name: str | None,
+    reuse_existing_video: bool = False,
 ) -> dict[str, Any]:
     if not _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False):
         return {"status": "skipped", "reason": "LONGTAIL_VIDEO_UPLOAD disabled"}
@@ -2851,7 +2956,9 @@ def _maybe_publish_longtail_video(
         token_file = _clean(os.getenv("LONGTAIL_TIKTOK_ACCESS_TOKEN_FILE"))
         if token_file:
             cmd.extend(["--tiktok-access-token-file", token_file])
-    if _env_flag("LONGTAIL_VIDEO_TTS_ENABLED", default=True):
+    if reuse_existing_video:
+        cmd.append("--reuse-existing-video")
+    if _env_flag("LONGTAIL_VIDEO_TTS_ENABLED", default=True) and not reuse_existing_video:
         cmd.append("--with-tts")
         if _env_flag("LONGTAIL_VIDEO_TTS_STRICT", default=False):
             cmd.append("--tts-strict")
@@ -2927,6 +3034,26 @@ def publish_bundle_to_naver(
             f"원인={publish_bundle.image_provider_fallback_reason or 'unknown'}"
         )
 
+    inline_video_result = _render_longtail_video_for_blog(
+        publish_bundle=publish_bundle,
+        category_name=category_name,
+    )
+    inline_video_path = _clean(str(inline_video_result.get("video_path") or "")) if inline_video_result.get("status") == "ok" else ""
+    inline_videos = [inline_video_path] if inline_video_path else []
+    if inline_videos:
+        publish_bundle.markdown = _insert_video_marker_after_lead_image(publish_bundle.markdown, 1)
+        publish_bundle.body_html = markdown_to_html(publish_bundle.markdown)
+        try:
+            meta_path = Path(publish_bundle.meta_path)
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["blog_inline_videos"] = inline_videos
+            meta["blog_inline_video_result"] = inline_video_result
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            (meta_path.parent / "body.md").write_text(publish_bundle.markdown, encoding="utf-8")
+            (meta_path.parent / "body.html").write_text(publish_bundle.body_html, encoding="utf-8")
+        except Exception:
+            pass
+
     blog_root = Path("/home/kj/app/bunyang/blog-cheongyak-automation")
     if str(blog_root) not in sys.path:
         sys.path.insert(0, str(blog_root))
@@ -2956,6 +3083,7 @@ def publish_bundle_to_naver(
             out=str(out_dir),
             body_markdown=publish_bundle.markdown,
             tags=publish_bundle.tags,
+            videos=inline_videos,
         )
     finally:
         for key, value in previous_env.items():
@@ -2974,6 +3102,7 @@ def publish_bundle_to_naver(
     if publish_bundle.image_provider_fallback_from:
         result["image_provider_fallback_from"] = publish_bundle.image_provider_fallback_from
         result["image_provider_fallback_reason"] = publish_bundle.image_provider_fallback_reason
+    result["blog_inline_video"] = inline_video_result
     result["publish_review"] = {
         "viewer_url_present": bool(result.get("current_url")),
         "viewer_image_count_matches": result.get("viewer_image_count") == len(publish_bundle.images),
@@ -2987,6 +3116,7 @@ def publish_bundle_to_naver(
         publish_bundle=publish_bundle,
         publish_result=result,
         category_name=category_name,
+        reuse_existing_video=bool(inline_videos),
     )
     if result.get("ok"):
         _persist_video_publish_result(
