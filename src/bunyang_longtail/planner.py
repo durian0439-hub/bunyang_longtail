@@ -340,7 +340,14 @@ def _compose_auction_title(cluster: dict[str, Any], angle: str) -> str:
         title = f"{primary} FAQ, {audience}가 가장 헷갈리는 질문"
     else:
         if intent == "가능여부":
-            title = f"{topic_scene}, 입찰해도 될지 보는 기준"
+            options = [
+                f"{topic_scene}, 바로 입찰 전 걸러볼 것",
+                f"{topic_scene}, 가격보다 먼저 볼 체크포인트",
+                f"{topic_scene}, 권리와 자금부터 보는 법",
+                f"{topic_scene}, 초보가 먼저 확인할 위험",
+                f"{topic_scene}, 들어가기 전 판단 순서",
+            ]
+            title = options[int(_hash(cluster['semantic_key'], size=2), 16) % len(options)]
         elif intent == "비교":
             title = f"{primary}{_particle(primary, ('과', '와'))} {comparison}, 경매초보가 헷갈리는 차이"
         elif intent == "실수방지":

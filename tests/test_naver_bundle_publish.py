@@ -770,6 +770,13 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertNotIn("청약 판단을 빨리 끝내려면", lead)
         self.assertNotIn("보셔야 합니다", lead)
 
+    def test_auction_lead_varies_repeated_snippet_phrase(self) -> None:
+        _, sections = parse_publish_sections(SAMPLE_ARTICLE, title_hint="경매 물건 검색 공부 순서, 가격보다 먼저 볼 체크포인트")
+        lead_a = "\n".join(target._lead_blocks("경매 물건 검색 공부 순서, 가격보다 먼저 볼 체크포인트", sections, domain="auction"))
+        lead_b = "\n".join(target._lead_blocks("개찰 결과를 기다릴 때, 권리와 자금부터 보는 법", sections, domain="auction"))
+        self.assertNotIn("경매 입찰 판단은 싼 가격보다 권리·점유·자금 리스크", lead_a)
+        self.assertNotEqual(lead_a.splitlines()[0], lead_b.splitlines()[0])
+
     def test_build_publish_bundle_writes_markdown_and_images(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle = build_publish_bundle(

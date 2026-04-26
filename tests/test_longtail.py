@@ -383,6 +383,20 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(conflict["conflict_reason"], "topic")
         self.assertTrue(candidate is None or candidate["id"] != pair["second_id"])
 
+    def test_auction_replenish_queue_varies_possible_bid_titles(self) -> None:
+        replenish_queue(self.db_path, min_queued=80, variants_per_cluster=1, domain="auction")
+        with connect(self.db_path) as conn:
+            repeated = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM topic_variant tv
+                JOIN topic_cluster tc ON tc.id = tv.cluster_id
+                WHERE tc.domain = 'auction'
+                  AND tv.title LIKE '%입찰해도 될지 보는 기준%'
+                """
+            ).fetchone()[0]
+        self.assertEqual(repeated, 0)
+
     def test_auction_select_publish_candidate_prefers_recent_family_diversity(self) -> None:
         with connect(self.db_path) as conn:
             variant_ids = {}

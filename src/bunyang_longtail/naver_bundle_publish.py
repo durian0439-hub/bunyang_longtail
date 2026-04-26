@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -2285,12 +2286,24 @@ def _section_lines_for_publish(title: str, section: PublishSection) -> list[str]
     return out
 
 
+def _auction_lead_line(title: str) -> str:
+    options = [
+        "경매는 최저가만 보고 들어가기보다, 남는 권리와 점유 상태를 먼저 나눠봐야 합니다.",
+        "같은 경매 물건이라도 권리관계, 점유, 잔금 계획을 같이 볼 때 판단이 달라집니다.",
+        "경매 공부의 핵심은 싸 보이는 물건을 고르는 것보다 위험한 조건을 먼저 거르는 데 있습니다.",
+        "입찰 전에는 낙찰가보다 보증금, 잔금, 명도 리스크가 감당 가능한지부터 확인해야 합니다.",
+        "경매 물건은 가격표보다 등기부, 매각물건명세서, 현장 점유 상태를 함께 봐야 판단이 섭니다.",
+    ]
+    digest = hashlib.sha1(_clean(title).encode("utf-8")).hexdigest()
+    return options[int(digest[:2], 16) % len(options)]
+
+
 def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | None = None) -> list[str]:
     content_domain = _content_domain(title, domain)
     topic = _topic_kind(title)
     if content_domain == "auction":
         return [
-            "경매 입찰 판단은 싼 가격보다 권리·점유·자금 리스크를 먼저 걸러내는 것이 핵심입니다.",
+            _auction_lead_line(title),
             "",
             _intro_text(sections, domain="auction"),
         ]
