@@ -2809,7 +2809,9 @@ def _render_longtail_video_for_blog(
     publish_bundle: PublishBundle,
     category_name: str | None,
 ) -> dict[str, Any]:
-    if not _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=False):
+    # 롱테일 블로그는 도메인(분양/경매/세금/대출)과 무관하게 썸네일 바로 아래에
+    # 재생 가능한 영상 컴포넌트를 기본 삽입한다. 특정 점검 실행에서만 명시적으로 끌 수 있다.
+    if not _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=True):
         return {"status": "skipped", "reason": "LONGTAIL_BLOG_INLINE_VIDEO disabled"}
     if not _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False):
         return {"status": "skipped", "reason": "LONGTAIL_VIDEO_UPLOAD disabled"}
@@ -3034,12 +3036,18 @@ def publish_bundle_to_naver(
             f"원인={publish_bundle.image_provider_fallback_reason or 'unknown'}"
         )
 
+    inline_video_enabled = _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=True)
     inline_video_result = _render_longtail_video_for_blog(
         publish_bundle=publish_bundle,
         category_name=category_name,
     )
     inline_video_path = _clean(str(inline_video_result.get("video_path") or "")) if inline_video_result.get("status") == "ok" else ""
     inline_videos = [inline_video_path] if inline_video_path else []
+    if inline_video_enabled and _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False) and not inline_videos:
+        raise RuntimeError(
+            "longtail_blog_inline_video_required_but_missing\n"
+            + json.dumps(inline_video_result, ensure_ascii=False, indent=2)
+        )
     if inline_videos:
         publish_bundle.markdown = _insert_video_marker_after_lead_image(publish_bundle.markdown, 1)
         publish_bundle.body_html = markdown_to_html(publish_bundle.markdown)

@@ -632,7 +632,10 @@ A. 서류와 현장을 다시 확인해야 합니다.
                 encoding="utf-8",
             )
 
+            seen_publish_kwargs: dict = {}
+
             def fake_publish(apt_id, title, body_html, images, **kwargs):
+                seen_publish_kwargs.update(kwargs)
                 out_dir = Path(kwargs["out"])
                 out_dir.mkdir(parents=True, exist_ok=True)
                 (out_dir / f"{apt_id}.json").write_text(
@@ -643,17 +646,18 @@ A. 서류와 현장을 다시 확인해야 합니다.
 
             def fake_run(cmd, **kwargs):
                 seen_cmd.extend(cmd)
+                payload = {
+                    "status": "ok",
+                    "project": "longtail",
+                    "video_path": str(Path(tmpdir) / "video" / "longtail-bundle-11.mp4"),
+                    "clip_package_path": "/tmp/longtail.naver_clip.json",
+                    "naver_clip_upload": {"status": "public_saved", "visibility": "public"},
+                }
+                Path(payload["video_path"]).parent.mkdir(parents=True, exist_ok=True)
+                Path(payload["video_path"]).write_bytes(b"mp4")
                 return SimpleNamespace(
                     returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "status": "ok",
-                            "project": "longtail",
-                            "clip_package_path": "/tmp/longtail.naver_clip.json",
-                            "naver_clip_upload": {"status": "public_saved", "visibility": "public"},
-                        },
-                        ensure_ascii=False,
-                    ),
+                    stdout=json.dumps(payload, ensure_ascii=False),
                     stderr="",
                 )
 
@@ -717,11 +721,13 @@ A. 서류와 현장을 다시 확인해야 합니다.
 
         self.assertEqual(result["video_publish"]["project"], "longtail")
         self.assertEqual(result["video_publish"]["blog_category"], "How To 경매")
+        self.assertIn("[[VIDEO:1]]", seen_publish_kwargs["body_markdown"])
+        self.assertEqual(len(seen_publish_kwargs["videos"]), 1)
         self.assertIn("--project", seen_cmd)
         self.assertIn("longtail", seen_cmd)
         self.assertIn("--blog-category", seen_cmd)
         self.assertIn("How To 경매", seen_cmd)
-        self.assertNotIn("--skip-youtube", seen_cmd)
+        self.assertEqual(seen_cmd.count("--skip-youtube"), 1)
         self.assertIn("--with-tts", seen_cmd)
         self.assertIn("--upload-naver-clip", seen_cmd)
         self.assertIn("--naver-clip-visibility", seen_cmd)
