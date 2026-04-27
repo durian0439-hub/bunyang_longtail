@@ -2903,7 +2903,7 @@ def _maybe_publish_longtail_video(
         return {"status": "skipped", "reason": "LONGTAIL_VIDEO_UPLOAD disabled"}
 
     blog_url = _clean(str(publish_result.get("current_url") or publish_result.get("url") or publish_result.get("naver_url") or ""))
-    if not blog_url:
+    if not blog_url and not _env_flag("LONGTAIL_NAVER_CLIP_FIRST", default=False):
         return {"status": "skipped", "reason": "blog_url missing"}
 
     meta_path = Path(publish_bundle.meta_path).resolve()
@@ -3002,6 +3002,45 @@ def _maybe_publish_longtail_video(
     return result
 
 
+def _extract_naver_clip_url(video_result: dict[str, Any]) -> str:
+    upload = video_result.get("naver_clip_upload") if isinstance(video_result, dict) else None
+    candidates = []
+    if isinstance(upload, dict):
+        share = upload.get("share")
+        if isinstance(share, dict):
+            candidates.append(share.get("share_url"))
+            candidates.append(share.get("page_url"))
+            candidates.append(share.get("profile_url"))
+        candidates.append(upload.get("share_url"))
+        candidates.append(upload.get("final_url"))
+    if isinstance(video_result, dict):
+        candidates.append(video_result.get("share_url"))
+        candidates.append(video_result.get("video_url"))
+    for candidate in candidates:
+        url = _clean(str(candidate or ""))
+        if url.startswith("https://") and ("clip.naver.com" in url or "naver.me" in url):
+            return url
+    if isinstance(upload, dict) and _clean(str(upload.get("status") or "")).endswith("saved"):
+        return _clean(os.getenv("NAVER_CLIP_PROFILE_URL")) or "https://clip.naver.com/@91koqb79em"
+    return ""
+
+
+def _insert_naver_clip_url_after_lead_image(markdown: str, clip_url: str) -> str:
+    url = _clean(clip_url)
+    if not url:
+        return str(markdown or "")
+    lines = str(markdown or "").splitlines()
+    if url in lines:
+        return str(markdown or "")
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"\[\[IMAGE:\d+\]\]", line.strip()):
+            insert_at = index + 1
+            while insert_at < len(lines) and not lines[insert_at].strip():
+                insert_at += 1
+            lines[insert_at:insert_at] = ["", "[[VIDEO:1]]", ""]
+            return "\n".join(lines).strip() + "\n"
+    return _insert_video_marker_after_lead_image(markdown, 1)
+
 def _requires_gpt_publish_images(image_provider: str) -> bool:
     return _clean(image_provider).lower() in {"gpt_web", "openai_compat"}
 
@@ -3036,25 +3075,59 @@ def publish_bundle_to_naver(
             f"원인={publish_bundle.image_provider_fallback_reason or 'unknown'}"
         )
 
+    blog_video_mode = _clean(os.getenv("LONGTAIL_BLOG_VIDEO_MODE", "naver_clip_embed")).lower()
     inline_video_enabled = _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=True)
-    inline_video_result = _render_longtail_video_for_blog(
-        publish_bundle=publish_bundle,
-        category_name=category_name,
-    )
-    inline_video_path = _clean(str(inline_video_result.get("video_path") or "")) if inline_video_result.get("status") == "ok" else ""
-    inline_videos = [inline_video_path] if inline_video_path else []
-    if inline_video_enabled and _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False) and not inline_videos:
-        raise RuntimeError(
-            "longtail_blog_inline_video_required_but_missing\n"
-            + json.dumps(inline_video_result, ensure_ascii=False, indent=2)
-        )
-    if inline_videos:
-        publish_bundle.markdown = _insert_video_marker_after_lead_image(publish_bundle.markdown, 1)
-        publish_bundle.body_html = markdown_to_html(publish_bundle.markdown)
+    inline_video_result: dict[str, Any] = {"status": "skipped", "reason": "naver_clip_embed_mode"}
+    inline_videos: list[str] = []
+    clip_urls: list[str] = []
+    pre_blog_video_result: dict[str, Any] | None = None
+
+    if inline_video_enabled and _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False):
+        if blog_video_mode in {"naver_clip", "naver_clip_embed", "clip", "clip_embed"}:
+            previous_clip_first = os.environ.get("LONGTAIL_NAVER_CLIP_FIRST")
+            os.environ["LONGTAIL_NAVER_CLIP_FIRST"] = "1"
+            try:
+                pre_blog_video_result = _maybe_publish_longtail_video(
+                    publish_bundle=publish_bundle,
+                    publish_result={},
+                    category_name=category_name,
+                    reuse_existing_video=False,
+                )
+            finally:
+                if previous_clip_first is None:
+                    os.environ.pop("LONGTAIL_NAVER_CLIP_FIRST", None)
+                else:
+                    os.environ["LONGTAIL_NAVER_CLIP_FIRST"] = previous_clip_first
+            clip_url = _extract_naver_clip_url(pre_blog_video_result)
+            if not clip_url:
+                raise RuntimeError(
+                    "longtail_naver_clip_url_required_but_missing\n"
+                    + json.dumps(pre_blog_video_result, ensure_ascii=False, indent=2)
+                )
+            clip_urls = [clip_url]
+            inline_video_result = {"status": "ok", "mode": "naver_clip_embed", "clip_url": clip_url, "video_publish": pre_blog_video_result}
+            publish_bundle.markdown = _insert_naver_clip_url_after_lead_image(publish_bundle.markdown, clip_url)
+            publish_bundle.body_html = markdown_to_html(publish_bundle.markdown)
+        else:
+            inline_video_result = _render_longtail_video_for_blog(
+                publish_bundle=publish_bundle,
+                category_name=category_name,
+            )
+            inline_video_path = _clean(str(inline_video_result.get("video_path") or "")) if inline_video_result.get("status") == "ok" else ""
+            inline_videos = [inline_video_path] if inline_video_path else []
+            if not inline_videos:
+                raise RuntimeError(
+                    "longtail_blog_inline_video_required_but_missing\n"
+                    + json.dumps(inline_video_result, ensure_ascii=False, indent=2)
+                )
+            publish_bundle.markdown = _insert_video_marker_after_lead_image(publish_bundle.markdown, 1)
+            publish_bundle.body_html = markdown_to_html(publish_bundle.markdown)
+
         try:
             meta_path = Path(publish_bundle.meta_path)
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             meta["blog_inline_videos"] = inline_videos
+            meta["blog_clip_urls"] = clip_urls
             meta["blog_inline_video_result"] = inline_video_result
             meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
             (meta_path.parent / "body.md").write_text(publish_bundle.markdown, encoding="utf-8")
@@ -3092,6 +3165,7 @@ def publish_bundle_to_naver(
             body_markdown=publish_bundle.markdown,
             tags=publish_bundle.tags,
             videos=inline_videos,
+            clip_urls=clip_urls,
         )
     finally:
         for key, value in previous_env.items():
@@ -3111,6 +3185,7 @@ def publish_bundle_to_naver(
         result["image_provider_fallback_from"] = publish_bundle.image_provider_fallback_from
         result["image_provider_fallback_reason"] = publish_bundle.image_provider_fallback_reason
     result["blog_inline_video"] = inline_video_result
+    result["blog_clip_urls"] = clip_urls
     result["publish_review"] = {
         "viewer_url_present": bool(result.get("current_url")),
         "viewer_image_count_matches": result.get("viewer_image_count") == len(publish_bundle.images),
@@ -3120,12 +3195,15 @@ def publish_bundle_to_naver(
         "manual_review_required": bool(result.get("manual_review_required")),
     }
     _persist_publish_result(db_path, article, result)
-    result["video_publish"] = _maybe_publish_longtail_video(
-        publish_bundle=publish_bundle,
-        publish_result=result,
-        category_name=category_name,
-        reuse_existing_video=bool(inline_videos),
-    )
+    if pre_blog_video_result is not None:
+        result["video_publish"] = pre_blog_video_result
+    else:
+        result["video_publish"] = _maybe_publish_longtail_video(
+            publish_bundle=publish_bundle,
+            publish_result=result,
+            category_name=category_name,
+            reuse_existing_video=bool(inline_videos),
+        )
     if result.get("ok"):
         _persist_video_publish_result(
             db_path,
