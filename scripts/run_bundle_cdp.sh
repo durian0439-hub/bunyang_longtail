@@ -41,9 +41,6 @@ python3 "$ROOT/scripts/gpt_web_session.py" start \
   --profile "$PROFILE"
 
 if has_arg "run-bundle"; then
-  if ! has_arg "--image-fallback"; then
-    args+=("--image-fallback" "local_canvas")
-  fi
   if ! has_arg "--wait-for-ready-seconds"; then
     args+=("--wait-for-ready-seconds" "$DEFAULT_WAIT_FOR_READY")
   fi

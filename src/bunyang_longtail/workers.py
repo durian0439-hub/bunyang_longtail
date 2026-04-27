@@ -6,6 +6,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional metadata helper
+    Image = None
+
 from .catalog import AUCTION_DOMAIN, TAX_DOMAIN
 from .config import (
     GPT_WEB_ARTIFACT_DIR,
@@ -16,7 +21,6 @@ from .config import (
 )
 from .database import connect, fetch_all, fetch_one, init_db
 from .gpt_web import GptWebExecutionError, execute_image_job, execute_text_job
-from .local_image_fallback import render_fallback_thumbnail
 from .article_quality import score_article_quality
 from .openai_compat import (
     OpenAICompatExecutionError,
@@ -764,24 +768,31 @@ def _write_simulated_image(file_path: str | Path) -> str:
 
 
 
-def _write_local_fallback_image(
-    *,
-    bundle_id: int,
-    image_role: str,
-    title: str,
-    excerpt: str,
-    article_markdown: str | None = None,
-    output_dir: str | Path | None = None,
-) -> str:
-    base_dir = Path(output_dir) if output_dir else SIMULATED_ASSET_DIR / "local_fallback"
-    output_path = base_dir / f"bundle_{bundle_id}_{image_role}_fallback.png"
-    return render_fallback_thumbnail(
-        title=title,
-        excerpt=excerpt,
-        output_path=output_path,
-        image_role=image_role,
-        article_markdown=article_markdown,
-    )
+def _image_dimensions(file_path: str | Path, *, default: tuple[int | None, int | None]) -> tuple[int | None, int | None]:
+    if Image is None:
+        return default
+    try:
+        with Image.open(file_path) as image:
+            width, height = image.size
+        return int(width), int(height)
+    except Exception:
+        return default
+
+
+
+def _require_generated_image_file(file_path: Any, *, source: str, artifact_dir: str | None = None) -> str:
+    if not file_path:
+        message = f"{source} 이미지 생성 결과에 file_path가 없습니다."
+        if source == "openai_compat":
+            raise OpenAICompatExecutionError(message, code="OPENAI_COMPAT_IMAGE_FILE_MISSING", artifact_dir=artifact_dir)
+        raise GptWebExecutionError(message, code="GPT_WEB_IMAGE_FILE_MISSING", artifact_dir=artifact_dir)
+    path = Path(str(file_path))
+    if not path.exists() or path.stat().st_size <= 0:
+        message = f"{source} 이미지 생성 결과 파일이 없거나 비어 있습니다: {path}"
+        if source == "openai_compat":
+            raise OpenAICompatExecutionError(message, code="OPENAI_COMPAT_IMAGE_FILE_MISSING", artifact_dir=artifact_dir)
+        raise GptWebExecutionError(message, code="GPT_WEB_IMAGE_FILE_MISSING", artifact_dir=artifact_dir)
+    return str(path)
 
 
 
@@ -818,7 +829,7 @@ def run_bundle(
     if simulate and executor_mode not in {"playwright", "codex_cli"}:
         raise ValueError("simulate 사용 시 executor_mode 는 playwright 또는 codex_cli 여야 합니다.")
 
-    if image_fallback not in {"none", "local_canvas"}:
+    if image_fallback != "none":
         raise ValueError(f"지원하지 않는 image_fallback 입니다: {image_fallback}")
 
     if executor_mode == "openai_compat":
@@ -1089,50 +1100,28 @@ def run_bundle(
                     artifact_root=artifact_root or GPT_WEB_ARTIFACT_DIR,
                     cdp_url=cdp_url,
                 )
+                generated_file_path = _require_generated_image_file(
+                    execution.get("file_path"),
+                    source="playwright",
+                    artifact_dir=(execution.get("response_payload") or {}).get("artifact_dir"),
+                )
+                generated_width, generated_height = _image_dimensions(generated_file_path, default=(1080, 1080))
                 image_results.append(
                     complete_image_job(
                         db_path,
                         job_id=image_job["job_id"],
                         image_role=role,
                         prompt_text=prompt_text,
-                        file_path=execution["file_path"],
-                        width=1080,
-                        height=1080,
+                        file_path=generated_file_path,
+                        width=generated_width,
+                        height=generated_height,
                         response_payload=execution.get("response_payload"),
                     )
                 )
             except GptWebExecutionError as exc:
-                if image_fallback == "local_canvas":
-                    fallback_path = _write_local_fallback_image(
-                        bundle_id=final_bundle_id,
-                        image_role=role,
-                        title=draft_row["title"],
-                        excerpt=draft_row["excerpt"] or draft_row["title"],
-                        article_markdown=draft_row["article_markdown"],
-                        output_dir=artifact_root,
-                    )
-                    image_results.append(
-                        complete_image_job(
-                            db_path,
-                            job_id=image_job["job_id"],
-                            image_role=role,
-                            prompt_text=prompt_text,
-                            file_path=fallback_path,
-                            width=1080,
-                            height=1080,
-                            response_payload={
-                                "mode": "local_canvas_fallback",
-                                "source_executor": "playwright",
-                                "source_error_code": exc.code,
-                                "source_error_message": str(exc),
-                                "source_artifact_dir": exc.artifact_dir,
-                            },
-                        )
-                    )
-                else:
-                    fail_job(db_path, job_id=image_job["job_id"], error_code=exc.code, error_message=str(exc))
-                    errors.append({"job_id": image_job["job_id"], "code": exc.code, "message": str(exc), "artifact_dir": exc.artifact_dir})
-                    return _bundle_payload("partial_failed")
+                fail_job(db_path, job_id=image_job["job_id"], error_code=exc.code, error_message=str(exc))
+                errors.append({"job_id": image_job["job_id"], "code": exc.code, "message": str(exc), "artifact_dir": exc.artifact_dir})
+                return _bundle_payload("partial_failed")
             continue
 
         if executor_mode == "openai_compat":
@@ -1151,15 +1140,21 @@ def run_bundle(
                     timeout_seconds=response_timeout_seconds,
                     artifact_root=artifact_root or OPENAI_COMPAT_ARTIFACT_DIR,
                 )
+                generated_file_path = _require_generated_image_file(
+                    execution.get("file_path"),
+                    source="openai_compat",
+                    artifact_dir=(execution.get("response_payload") or {}).get("artifact_dir"),
+                )
+                generated_width, generated_height = _image_dimensions(generated_file_path, default=(1024, 1024))
                 image_results.append(
                     complete_image_job(
                         db_path,
                         job_id=image_job["job_id"],
                         image_role=role,
                         prompt_text=prompt_text,
-                        file_path=execution["file_path"],
-                        width=1024,
-                        height=1024,
+                        file_path=generated_file_path,
+                        width=generated_width,
+                        height=generated_height,
                         response_payload=execution.get("response_payload"),
                     )
                 )

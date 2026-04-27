@@ -2070,34 +2070,18 @@ def _render_publish_assets_result(
             image_provider_requested=requested_provider,
         )
 
-    try:
-        assets = _render_gpt_publish_assets(
-            title=title,
-            sections=sections,
-            output_dir=output_dir,
-            provider=resolved_provider,
-            inline_table_specs=inline_table_specs,
-        )
-        return PublishAssetRenderResult(
-            assets=assets,
-            image_provider=resolved_provider,
-            image_provider_requested=requested_provider,
-        )
-    except RuntimeError as exc:
-        fallback_assets = _render_publish_assets_local(
-            title=title,
-            sections=sections,
-            output_dir=output_dir,
-            inline_table_specs=inline_table_specs,
-            domain=domain,
-        )
-        return PublishAssetRenderResult(
-            assets=fallback_assets,
-            image_provider="local",
-            image_provider_requested=requested_provider,
-            image_provider_fallback_from=resolved_provider,
-            image_provider_fallback_reason=str(exc),
-        )
+    assets = _render_gpt_publish_assets(
+        title=title,
+        sections=sections,
+        output_dir=output_dir,
+        provider=resolved_provider,
+        inline_table_specs=inline_table_specs,
+    )
+    return PublishAssetRenderResult(
+        assets=assets,
+        image_provider=resolved_provider,
+        image_provider_requested=requested_provider,
+    )
 
 
 
@@ -3070,7 +3054,7 @@ def publish_bundle_to_naver(
 
     if _requires_gpt_publish_images(image_provider) and publish_bundle.image_provider != _clean(image_provider).lower():
         raise RuntimeError(
-            "GPT 이미지 생성이 실패해 로컬 fallback 이미지가 생성되었습니다. "
+            "GPT 이미지 생성이 실패했으며 로컬 fallback은 허용하지 않습니다. "
             f"요청 provider={image_provider}, 실제 provider={publish_bundle.image_provider}, "
             f"원인={publish_bundle.image_provider_fallback_reason or 'unknown'}"
         )

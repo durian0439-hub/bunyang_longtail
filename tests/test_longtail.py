@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -954,7 +956,7 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(summary["drafts"], 1)
         self.assertEqual(summary["image_assets"], 1)
 
-    def test_run_bundle_local_canvas_fallback_completes_when_gpt_web_image_fails(self) -> None:
+    def test_run_bundle_fails_without_local_canvas_fallback_when_gpt_web_image_fails(self) -> None:
         replenish_queue(self.db_path, min_queued=10, variants_per_cluster=1)
         text_job = queue_text_job(self.db_path)
         start_job(self.db_path, text_job["job_id"])
@@ -978,31 +980,51 @@ class LongtailPlannerTest(unittest.TestCase):
                 image_roles=["thumbnail"],
                 executor_mode="playwright",
                 text_route="reuse_existing",
-                image_fallback="local_canvas",
-                artifact_root=Path(self.tmpdir.name) / "local_fallback_artifacts",
+                artifact_root=Path(self.tmpdir.name) / "gpt_artifacts",
             )
-        self.assertEqual(result["mode"], "playwright_complete")
-        self.assertEqual(result["bundle"]["bundle_status"], "bundled")
-        self.assertEqual(len(result["errors"]), 0)
+        self.assertEqual(result["mode"], "partial_failed")
+        self.assertEqual(result["bundle"]["bundle_status"], "queued")
+        self.assertEqual(result["errors"][0]["code"], "GPT_WEB_LOGIN_REQUIRED")
         summary = stats(self.db_path)
-        self.assertEqual(summary["image_assets"], 1)
+        self.assertEqual(summary["image_assets"], 0)
         with connect(self.db_path) as conn:
             payload_raw = conn.execute(
                 "SELECT response_payload_json FROM generation_job WHERE id = ?",
                 (result["image_jobs"][0]["job_id"],),
             ).fetchone()[0]
-            asset_path = conn.execute("SELECT file_path FROM image_asset WHERE bundle_id = ?", (text_job["bundle_id"],)).fetchone()[0]
-        payload = json.loads(payload_raw)
-        self.assertEqual(payload["mode"], "local_canvas_fallback")
-        self.assertEqual(payload["source_error_code"], "GPT_WEB_LOGIN_REQUIRED")
-        self.assertTrue(Path(asset_path).exists())
+        self.assertNotIn("local_canvas_fallback", payload_raw or "")
+
+    def test_run_bundle_rejects_local_canvas_image_fallback_option(self) -> None:
+        with self.assertRaises(ValueError):
+            run_bundle(self.db_path, image_fallback="local_canvas")
+
+    def test_run_bundle_playwright_requires_generated_image_file(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=1)
+        markdown_path = Path(self.tmpdir.name) / "article.md"
+        markdown_path.write_text("# 제목\n\n본문 결론", encoding="utf-8")
+        missing_path = Path(self.tmpdir.name) / "missing.png"
+        with patch(
+            "bunyang_longtail.workers.execute_image_job",
+            return_value={"file_path": str(missing_path), "response_payload": {"mode": "playwright"}},
+        ):
+            result = run_bundle(
+                self.db_path,
+                variant_id=1,
+                markdown_file=markdown_path,
+                image_roles=["thumbnail"],
+                executor_mode="playwright",
+            )
+        self.assertEqual(result["mode"], "partial_failed")
+        self.assertEqual(result["errors"][0]["code"], "GPT_WEB_IMAGE_FILE_MISSING")
+        summary = stats(self.db_path)
+        self.assertEqual(summary["image_assets"], 0)
 
     def test_run_bundle_with_markdown_file_still_executes_images(self) -> None:
         replenish_queue(self.db_path, min_queued=10, variants_per_cluster=1)
         markdown_path = Path(self.tmpdir.name) / "article.md"
         markdown_path.write_text("# 제목\n\n본문 결론", encoding="utf-8")
         image_path = Path(self.tmpdir.name) / "generated.png"
-        image_path.write_bytes(b"fakepng")
+        Image.new("RGB", (321, 123), "white").save(image_path)
         with patch(
             "bunyang_longtail.workers.execute_image_job",
             return_value={"file_path": str(image_path), "response_payload": {"mode": "playwright"}},
@@ -1020,6 +1042,9 @@ class LongtailPlannerTest(unittest.TestCase):
         summary = stats(self.db_path)
         self.assertEqual(summary["drafts"], 1)
         self.assertEqual(summary["image_assets"], 1)
+        with connect(self.db_path) as conn:
+            dimensions = conn.execute("SELECT width, height FROM image_asset LIMIT 1").fetchone()
+        self.assertEqual(tuple(dimensions), (321, 123))
 
     def test_probe_openai_compat_without_api_key_fails(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -1467,6 +1492,7 @@ DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
             "https://chatgpt.com/backend-api/estuary/content?id=file_new",
         ]
         self.assertTrue(_looks_like_generated_image_src(after[-1]))
+        self.assertTrue(_looks_like_generated_image_src("https://sdmntprwestus3.oaiusercontent.com/files/abc/raw?sig=1"))
         self.assertFalse(_looks_like_generated_image_src("https://lh3.googleusercontent.com/avatar"))
         self.assertTrue(_has_new_generated_image(before, after))
         self.assertFalse(_has_new_generated_image(before, before))
@@ -1495,8 +1521,8 @@ DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
             "bunyang_longtail.gpt_web._collect_generated_image_sources",
             return_value=["https://chatgpt.com/backend-api/estuary/content?id=file_new"],
         ), patch(
-            "bunyang_longtail.gpt_web._last_visible",
-            return_value=("img[src*='estuary']", DummyImageLocator()),
+            "bunyang_longtail.gpt_web._new_generated_image_locator",
+            return_value=DummyImageLocator(),
         ), patch("bunyang_longtail.gpt_web._has_stop_button", return_value=False), patch(
             "bunyang_longtail.gpt_web._take_artifacts"
         ):
@@ -1512,6 +1538,52 @@ DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
         self.assertEqual(result["file_path"], str(output_path))
         self.assertTrue(output_path.exists())
         self.assertGreater(output_path.stat().st_size, 0)
+
+    def test_wait_for_image_response_does_not_save_old_image_when_only_text_changes(self) -> None:
+        output_path = Path(self.tmpdir.name) / "old.png"
+        artifact_dir = Path(self.tmpdir.name) / "artifacts_old"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        class DummyTextLocator:
+            def inner_text(self, *_args, **_kwargs) -> str:
+                return "이미지를 만들 수 없습니다."
+
+        class DummyImageLocator:
+            def get_attribute(self, name: str) -> str:
+                if name == "src":
+                    return "data:image/png;base64,iVBORw0KGgo="
+                return ""
+
+        class DummyPage:
+            def wait_for_timeout(self, _ms: int) -> None:
+                return None
+
+            def evaluate(self, *_args, **_kwargs):
+                return None
+
+        with patch("bunyang_longtail.gpt_web._last_locator", return_value=DummyTextLocator()), patch(
+            "bunyang_longtail.gpt_web._count_locators", return_value=2
+        ), patch(
+            "bunyang_longtail.gpt_web._collect_generated_image_sources",
+            return_value=["https://chatgpt.com/backend-api/estuary/content?id=file_old"],
+        ), patch(
+            "bunyang_longtail.gpt_web._new_generated_image_locator",
+            return_value=None,
+        ), patch("bunyang_longtail.gpt_web._has_stop_button", return_value=False), patch(
+            "bunyang_longtail.gpt_web._take_artifacts"
+        ):
+            with self.assertRaises(GptWebExecutionError) as exc_info:
+                _wait_for_image_response(
+                    DummyPage(),
+                    artifact_dir=artifact_dir,
+                    output_path=output_path,
+                    timeout_seconds=0,
+                    before_count=1,
+                    before_text="",
+                    before_image_sources=["https://chatgpt.com/backend-api/estuary/content?id=file_old"],
+                )
+        self.assertEqual(exc_info.exception.code, "GPT_WEB_IMAGE_TIMEOUT")
+        self.assertFalse(output_path.exists())
 
     def test_summary_source_uses_article_body_when_excerpt_is_placeholder(self) -> None:
         article_markdown = "# 제목\n\n상단 요약\n\n30대 맞벌이도 일반공급 1순위는 충분히 가능할 수 있습니다.\n\nFAQ"

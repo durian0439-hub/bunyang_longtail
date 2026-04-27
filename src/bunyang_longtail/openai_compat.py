@@ -283,6 +283,12 @@ def execute_image_job(
             code="OPENAI_COMPAT_EMPTY_IMAGE_RESPONSE",
             artifact_dir=str(artifact_dir),
         )
+    if not output.exists() or output.stat().st_size <= 0:
+        raise OpenAICompatExecutionError(
+            f"이미지 파일 저장에 실패했거나 파일이 비어 있습니다: {output}",
+            code="OPENAI_COMPAT_IMAGE_FILE_MISSING",
+            artifact_dir=str(artifact_dir),
+        )
     return {
         "file_path": str(output),
         "response_payload": {

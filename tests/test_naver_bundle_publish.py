@@ -919,29 +919,21 @@ Q1. 바로 신청해도 되나요?
             self.assertIn("홈택스", bundle.tags)
             self.assertNotIn("입주자모집공고", bundle.markdown)
 
-    def test_build_publish_bundle_falls_back_to_local_when_gpt_image_fails(self) -> None:
+    def test_build_publish_bundle_raises_when_gpt_image_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(
             target,
             "_render_gpt_publish_assets",
             side_effect=RuntimeError("GPT 이미지 생성 실패: 요약 카드, provider=gpt_web, 응답 없음"),
         ):
-            bundle = build_publish_bundle(
-                bundle_id=99,
-                variant_title="기관추천 특별공급 배우자 이력이 있을 때, 노부모 부양 세대도 가능할까",
-                article_markdown=SPARSE_INSTITUTION_ARTICLE,
-                output_root=tmpdir,
-                image_provider="gpt_web",
-            )
-            meta = json.loads(Path(bundle.meta_path).read_text(encoding="utf-8"))
-            self.assertEqual(bundle.image_provider, "local")
-            self.assertEqual(bundle.image_provider_requested, "gpt_web")
-            self.assertEqual(bundle.image_provider_fallback_from, "gpt_web")
-            self.assertIn("GPT 이미지 생성 실패", bundle.image_provider_fallback_reason or "")
-            self.assertEqual(meta["image_provider"], "local")
-            self.assertEqual(meta["image_provider_requested"], "gpt_web")
-            self.assertEqual(meta["image_provider_fallback_from"], "gpt_web")
-            self.assertIn("GPT 이미지 생성 실패", meta["image_provider_fallback_reason"])
-            self.assertTrue(all(Path(path).exists() for path in bundle.images))
+            with self.assertRaisesRegex(RuntimeError, "GPT 이미지 생성 실패"):
+                build_publish_bundle(
+                    bundle_id=99,
+                    variant_title="기관추천 특별공급 배우자 이력이 있을 때, 노부모 부양 세대도 가능할까",
+                    article_markdown=SPARSE_INSTITUTION_ARTICLE,
+                    output_root=tmpdir,
+                    image_provider="gpt_web",
+                )
+            self.assertFalse((Path(tmpdir) / "publish_bundle.json").exists())
 
     def test_parse_publish_sections_supports_markdown_headings(self) -> None:
         original_title, sections = parse_publish_sections(

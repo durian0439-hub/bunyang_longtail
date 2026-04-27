@@ -47,7 +47,7 @@ python3 run.py run-bundle --id 97 --executor mock --image-role thumbnail --image
 python3 run.py run-bundle --id 97 --executor openai_compat --image-role thumbnail --image-role summary_card
 python3 run.py run-bundle --id 97 --markdown-file data/article.md --image-spec thumbnail=data/thumb.png
 python3 run.py run-bundle --id 97 --simulate --image-role thumbnail --image-role summary_card
-python3 run.py run-bundle --id 97 --image-fallback local_canvas --image-role thumbnail --image-role summary_card
+python3 run.py run-bundle --id 97 --image-role thumbnail --image-role summary_card
 python3 run.py run-bundle --bundle-id 1 --executor mock --image-role thumbnail --image-role summary_card
 python3 run.py probe-gpt-web --headed --profile gpt_text_profile_dev
 python3 run.py probe-openai-compat
@@ -107,7 +107,6 @@ python3 scripts/gpt_web_session.py stop
 
 - `run_bundle_cdp.sh` 는 시작 시 세션을 올리고, 종료 시 기본으로 세션을 자동 정리합니다.
 - `run_bundle_cdp.sh` 는 `run-bundle` 호출 시 기본으로 아래 값을 자동 보강합니다.
-  - `--image-fallback local_canvas`
   - `--wait-for-ready-seconds 60`
   - `--response-timeout-seconds 600`
 - 필요하면 명시 인자로 덮어쓸 수 있습니다.
@@ -143,7 +142,7 @@ python3 run.py probe-openai-compat
 - `--executor mock`: 실제 외부 호출 없이 본문/이미지를 모의 생성해 bundle 상태 전이 검증
 - `--executor none`: 텍스트 job만 큐잉하고 시작한 뒤 즉시 반환
 - `--simulate`: 완전 시뮬레이션 모드, 본문 마크다운과 PNG를 로컬에서 생성
-- `--image-fallback local_canvas`: GPT 웹 이미지가 로그인 만료, challenge, timeout 등으로 실패하면 로컬 카드 이미지를 자동 생성
+- 이미지 생성 실패 시 로컬 카드로 대체하지 않고 job을 실패 처리합니다.
 - 같은 `bundle_id`로 다시 실행하면 기존 초안/성공한 이미지 역할을 재사용하고, 아직 비어 있는 역할만 이어서 생성합니다.
 - 같은 bundle 내부 재시도 시 `generation_job.attempt_no`는 자동 증가합니다.
 

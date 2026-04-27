@@ -4,7 +4,7 @@
 
 ## 현재 목표
 - 무료 웹 우선 경로로 `run-bundle`에서 본문 + 이미지 세트를 실제 생성
-- ChatGPT 웹 로그인/검증이 막혀도 이미지 세트는 자동 fallback으로 완료되게 유지
+- ChatGPT 웹/OpenAI 이미지 생성이 실패하면 로컬 이미지로 완료 처리하지 않고 실패를 드러내게 유지
 
 ## 이미 끝난 작업
 - `article_bundle` 중심 구조 정리 완료
@@ -21,8 +21,8 @@
   - 이미지 응답 감지를 `estuary/blob/data:image` 기반으로 강화
   - 기존 텍스트가 유지된 채 이미지가 추가되는 경우도 새 이미지로 판정하도록 보정
   - 게스트 홈/로그인 버튼/Cloudflare challenge 판정 보정
-  - `local_canvas` 이미지 fallback 추가
-  - `summary_card` 전용 fallback 레이아웃 및 요약 문장 정규화 추가
+  - `local_canvas` 이미지 fallback은 제거됨
+  - 명시적 local 렌더링용 `summary_card` 레이아웃 및 요약 문장 정규화 추가
   - `markdown_file` 사용 시 이미지 executor가 건너뛰는 버그 수정
 - 2026-04-21 추가 운용 스크립트 구현
   - `scripts/gpt_web_session.py`: 터미널에서 `Xvfb + Chrome + CDP` 세션 시작/중지/상태확인
@@ -88,7 +88,7 @@
   - artifact: `data/gpt_web_artifacts/probe_job_*`, `image_job_*`
 - `./scripts/run_bundle_cdp.sh --db data/cdp_probe5.sqlite3 run-bundle --bundle-id 1 --image-role summary_card_v2` 실행
   - 결과: `playwright_complete`
-  - 실제 처리: 웹은 challenge였지만 `local_canvas_fallback`으로 성공
+  - 과거 처리: 웹 challenge를 `local_canvas_fallback`으로 성공 처리했으나, 현재는 실패로 드러내야 함
 - `./scripts/run_bundle_cdp.sh --db data/cdp_probe5.sqlite3 run-bundle --id 2 --markdown-file data/generated_variant_2.md --image-role thumbnail --image-role summary_card` 실행
   - 최초 실행에서 `markdown_file` 분기 버그 발견, 수정 후 bundle `2` 성공
 - `./scripts/run_bundle_cdp.sh --db data/cdp_probe5.sqlite3 run-bundle --id 3 --markdown-file data/generated_variant_3.md --image-role thumbnail --image-role summary_card` 실행
@@ -135,7 +135,7 @@ python3 run.py probe-gpt-web --profile gpt_terminal_profile_dev --cdp-url http:/
    - 재부팅 후에도 서비스가 자동 기동
    - Chrome/Xvfb 비정상 종료 시 15초 내 자동 복구
    - 새 탭에서 깨끗한 채팅 시작
-   - 웹 이미지 생성이 실패해도 `local_canvas_fallback`으로 이미지 asset 생성
+   - 웹 이미지 생성 실패 시 이미지 asset 생성 없이 실패 처리
    - bundle 상태가 `bundled`로 전환
 6. 실패 시 추가 확인 포인트
    - Cloudflare / 로그인 검증이 새 프로필 시작 시 다시 뜨는지
@@ -146,6 +146,6 @@ python3 run.py probe-gpt-web --profile gpt_terminal_profile_dev --cdp-url http:/
 ## 참고
 - 현재 repo는 git repo가 아님. `git status` 불가 확인됨.
 - 무료 웹 경로를 고집하면 CDP attach 방식이 가장 유력함.
-- OpenAI 호환 API fallback은 이미 구현/검증 완료되어 있음. 단, 사용자 요구는 웹 우선.
+- OpenAI 호환 API 경로는 이미 구현/검증 완료되어 있음. 단, 사용자 요구는 웹 우선이며 로컬 이미지 fallback은 금지.
 - 사용자는 `200불짜리라 제한없음`이라고 언급함. 즉, 플랜 제한보다 UI/도구 호출 문제가 우선 의심됨.
-- 현재 dev 기준 권장 기본 경로는 `run_bundle_cdp.sh` + `local_canvas` fallback 이다.
+- 현재 dev 기준 권장 기본 경로는 `run_bundle_cdp.sh`이며, 로컬 이미지 fallback은 사용하지 않는다.

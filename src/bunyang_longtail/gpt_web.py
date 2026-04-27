@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import time
+import urllib.request
 from pathlib import Path
 from shutil import which
 from typing import Any
@@ -67,6 +68,8 @@ CHALLENGE_SELECTORS = [
 IMAGE_SELECTORS = [
     'img[src*="/backend-api/estuary/content"]',
     'img[src*="/backend-api/files/"]',
+    'img[src*="oaiusercontent.com"]',
+    'img[src*="/files/"][src*="/raw"]',
     'img[src^="blob:"]',
     'img[src^="data:image"]',
     'img[alt*="Generated"]',
@@ -90,9 +93,13 @@ GPT_WEB_GOOGLE_PASSWORD_KEYS = [
 ]
 GOOGLE_CONTINUE_SELECTORS = [
     'button:has-text("Google로 계속하기")',
+    'button:has-text("Google 계정으로 계속하기")',
     'button:has-text("Continue with Google")',
+    'button:has-text("Continue with Google account")',
     'div[role="button"]:has-text("Google로 계속하기")',
+    'div[role="button"]:has-text("Google 계정으로 계속하기")',
     'div[role="button"]:has-text("Continue with Google")',
+    'div[role="button"]:has-text("Continue with Google account")',
 ]
 GOOGLE_EMAIL_INPUT_SELECTORS = [
     'input[type="email"]',
@@ -348,6 +355,14 @@ def _maybe_auto_login(page: Any, credentials: dict[str, str]) -> bool:
     email = credentials.get("email", "")
     password = credentials.get("password", "")
 
+    if current_url.startswith("chrome://signin-dice-web-intercept"):
+        try:
+            page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+            return True
+        except Exception:
+            return action_taken
+
     if "accounts.google.com" in current_url:
         if _click_google_account_chooser(page, email):
             page.wait_for_timeout(1500)
@@ -358,7 +373,7 @@ def _maybe_auto_login(page: Any, credentials: dict[str, str]) -> bool:
             return True
         if _fill_visible_input(page, GOOGLE_PASSWORD_INPUT_SELECTORS, password):
             _submit_google_step(page)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(5000)
             return True
         if _click_first_visible(page, GOOGLE_APPROVAL_SELECTORS):
             page.wait_for_timeout(1500)
@@ -484,6 +499,8 @@ def _looks_like_generated_image_src(src: str) -> bool:
         and (
             "/backend-api/estuary/content" in normalized
             or "/backend-api/files/" in normalized
+            or "oaiusercontent.com" in normalized
+            or ("/files/" in normalized and "/raw" in normalized)
             or normalized.startswith("blob:")
             or normalized.startswith("data:image")
         )
@@ -494,6 +511,28 @@ def _looks_like_generated_image_src(src: str) -> bool:
 def _has_new_generated_image(before: list[str], after: list[str]) -> bool:
     before_set = {item for item in before if item}
     return any(item and item not in before_set for item in after)
+
+
+
+def _new_generated_image_locator(page: Any, before_sources: list[str]) -> Any | None:
+    before_set = {item for item in before_sources if item}
+    for selector in IMAGE_SELECTORS:
+        try:
+            locator = page.locator(selector)
+            count = locator.count()
+        except Exception:
+            continue
+        for index in range(min(count, 20) - 1, -1, -1):
+            target = locator.nth(index)
+            try:
+                if not target.is_visible():
+                    continue
+                src = target.get_attribute("src") or ""
+            except Exception:
+                continue
+            if _looks_like_generated_image_src(src) and src not in before_set:
+                return target
+    return None
 
 
 
@@ -813,13 +852,12 @@ def _detect_page_state(page: Any) -> str:
     # ready 가 아니라 login_required 로 판정해야 한다.
     if has_visible_composer and not has_visible_login_hint:
         return "ready"
+    has_visible_challenge = _first_visible(page, CHALLENGE_SELECTORS) is not None
     if (
         "just a moment" in normalized_title
         or "잠시만 기다리십시오" in title
         or "verify you are human" in html
-        or "cf-turnstile-response" in html
-        or "/cdn-cgi/challenge-platform/" in html
-        or _count_locators(page, CHALLENGE_SELECTORS) > 0
+        or has_visible_challenge
     ):
         return "challenge"
     if "accounts.google.com" in current_url or "auth.openai.com" in current_url:
@@ -1021,7 +1059,18 @@ def _save_generated_image(page: Any, image_locator: Any, output_path: Path) -> N
                 output_path.write_bytes(bytes(payload['bytes']))
                 return
         except Exception as exc:
-            raise RuntimeError(f'브라우저 세션 다운로드 실패: {src}, {exc}') from exc
+            browser_exc = exc
+        else:
+            browser_exc = None
+        try:
+            with urllib.request.urlopen(src, timeout=120) as response:
+                output_path.write_bytes(response.read())
+            if output_path.exists() and output_path.stat().st_size > 0:
+                return
+        except Exception as exc:
+            if browser_exc is not None:
+                raise RuntimeError(f'브라우저/직접 다운로드 모두 실패: {src}, browser={browser_exc}, direct={exc}') from exc
+            raise RuntimeError(f'직접 다운로드 실패: {src}, {exc}') from exc
 
     raise RuntimeError(f'다운로드 가능한 원본 이미지 src를 찾지 못했습니다: {src}')
 
@@ -1043,18 +1092,15 @@ def _wait_for_image_response(
         locator = _last_locator(page, ASSISTANT_TURN_SELECTORS)
         current_count = _count_locators(page, ASSISTANT_TURN_SELECTORS)
         reply_text = ""
-        response_changed = current_count > before_count
         if locator is not None and current_count >= max(1, before_count):
             try:
                 reply_text = locator.inner_text(timeout=2000).strip()
             except Exception:
                 reply_text = ""
-            response_changed = current_count > before_count or (reply_text and reply_text != before_text)
         current_image_sources = _collect_generated_image_sources(page)
         has_new_image = _has_new_generated_image(seen_before, current_image_sources)
-        visible_image = _last_visible(page, IMAGE_SELECTORS)
-        image_locator = visible_image[1] if visible_image else None
-        if image_locator is not None and (has_new_image or response_changed) and not _has_stop_button(page):
+        image_locator = _new_generated_image_locator(page, seen_before) if has_new_image else None
+        if image_locator is not None and not _has_stop_button(page):
             try:
                 _save_generated_image(page, image_locator, output_path)
             except Exception as exc:
@@ -1071,9 +1117,9 @@ def _wait_for_image_response(
         page.wait_for_timeout(2000)
 
     current_image_sources = _collect_generated_image_sources(page)
-    visible_image = _last_visible(page, IMAGE_SELECTORS)
-    image_locator = visible_image[1] if visible_image else None
-    if image_locator is not None and _has_new_generated_image(seen_before, current_image_sources) and not _has_stop_button(page):
+    has_new_image = _has_new_generated_image(seen_before, current_image_sources)
+    image_locator = _new_generated_image_locator(page, seen_before) if has_new_image else None
+    if image_locator is not None and not _has_stop_button(page):
         try:
             _save_generated_image(page, image_locator, output_path)
         except Exception as exc:

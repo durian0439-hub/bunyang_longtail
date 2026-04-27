@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_bundle_parser.add_argument("--image-model-label", default="gpt-web-image")
     run_bundle_parser.add_argument("--quality-score", type=float)
     run_bundle_parser.add_argument("--similarity-score", type=float)
-    run_bundle_parser.add_argument("--image-fallback", choices=["none", "local_canvas"], default="none")
+    run_bundle_parser.add_argument("--image-fallback", choices=["none"], default="none")
 
     probe_parser = subparsers.add_parser("probe-gpt-web", help="GPT 웹 로그인/준비 상태 점검")
     probe_parser.add_argument("--profile", default="gpt_text_profile_dev")
