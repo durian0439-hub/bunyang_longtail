@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 from shutil import which
@@ -669,6 +670,32 @@ def _cleanup_stale_chrome_profile_locks(profile_dir: Path) -> None:
         return
 
 
+def _clone_profile_for_isolated_run(source_profile_dir: Path, *, job_id: int, artifact_dir: Path) -> Path:
+    """Use a per-job Chrome profile clone so concurrent sessions do not fight."""
+    if os.getenv("GPT_WEB_CLONE_PROFILE_PER_JOB", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return source_profile_dir
+    runtime_root = source_profile_dir.parent / "_runtime"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_profile_dir = runtime_root / f"{source_profile_dir.name}_{job_id}_{os.getpid()}"
+    ignore = shutil.ignore_patterns(
+        "SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile",
+        "Crash Reports", "ShaderCache", "GrShaderCache", "GraphiteDawnCache",
+        "GPUCache", "Code Cache", "Cache", "DawnCache", "BrowserMetrics*",
+    )
+    try:
+        if runtime_profile_dir.exists():
+            shutil.rmtree(runtime_profile_dir, ignore_errors=True)
+        shutil.copytree(source_profile_dir, runtime_profile_dir, ignore=ignore)
+    except Exception as exc:
+        raise GptWebExecutionError(
+            f"GPT 웹 프로필 복제에 실패했습니다: {exc}",
+            code="GPT_WEB_PROFILE_CLONE_FAILED",
+            artifact_dir=str(artifact_dir),
+        )
+    _cleanup_stale_chrome_profile_locks(runtime_profile_dir)
+    return runtime_profile_dir
+
+
 def _launch_context(
     *,
     profile_dir: Path,
@@ -1218,7 +1245,8 @@ def execute_image_job(
 ) -> dict[str, Any]:
     ensure_data_dir()
     artifact_dir = _artifact_dir("image", job_id, artifact_root)
-    profile_dir = _profile_dir(profile_name, profile_root)
+    source_profile_dir = _profile_dir(profile_name, profile_root)
+    profile_dir = _clone_profile_for_isolated_run(source_profile_dir, job_id=job_id, artifact_dir=artifact_dir) if not cdp_url else source_profile_dir
     playwright = None
     context = None
     page = None
@@ -1290,3 +1318,5 @@ def execute_image_job(
             context.close()
         if playwright is not None:
             playwright.stop()
+        if profile_dir != source_profile_dir and os.getenv("GPT_WEB_KEEP_RUNTIME_PROFILE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            shutil.rmtree(profile_dir, ignore_errors=True)
