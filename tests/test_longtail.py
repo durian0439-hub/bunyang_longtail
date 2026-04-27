@@ -881,6 +881,11 @@ class LongtailPlannerTest(unittest.TestCase):
         )
         image_job = queue_image_job(self.db_path, bundle_id=bundle["id"], image_role="thumbnail")
         start_job(self.db_path, image_job["job_id"])
+        with connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE generation_job SET started_at = datetime('now', '-30 minutes') WHERE id = ?",
+                (image_job["job_id"],),
+            )
 
         with connect(self.db_path) as conn:
             recovered = _ensure_bundle_in_conn(conn, variant_id=candidate["id"])

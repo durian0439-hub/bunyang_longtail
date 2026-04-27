@@ -190,7 +190,7 @@ def _latest_active_bundle(conn: Any, variant_id: int) -> dict[str, Any] | None:
 
 
 def _is_stale_running_job(job: dict[str, Any], *, stale_minutes: int = 20) -> bool:
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     status = str(job.get("status") or "")
     started_at = job.get("started_at") or job.get("created_at")
@@ -208,7 +208,11 @@ def _is_stale_running_job(job: dict[str, Any], *, stale_minutes: int = 20) -> bo
             started = None
     if started is None:
         return False
-    now = datetime.now(started.tzinfo) if started.tzinfo else datetime.now()
+    if started.tzinfo is None:
+        # SQLite CURRENT_TIMESTAMP is UTC. Treat naive DB timestamps as UTC so
+        # stale-job recovery behaves the same on KST PCs and UTC OCI hosts.
+        started = started.replace(tzinfo=timezone.utc)
+    now = datetime.now(started.tzinfo)
     return now - started >= timedelta(minutes=stale_minutes)
 
 
