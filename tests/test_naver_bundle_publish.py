@@ -562,6 +562,9 @@ A. 서류와 현장을 다시 확인해야 합니다.
         os.environ["NAVER_BLOG_CATEGORY_NAME"] = "Old Category"
         try:
             with patch.dict(
+                os.environ,
+                {"LONGTAIL_VIDEO_UPLOAD": "0"},
+            ), patch.dict(
                 sys.modules,
                 {
                     "src": fake_src,
