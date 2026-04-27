@@ -640,6 +640,35 @@ def build_image_prompt(
 
 
 
+def _cleanup_stale_chrome_profile_locks(profile_dir: Path) -> None:
+    """Remove Chrome singleton files left by dead processes.
+
+    Persistent Chrome profiles refuse to start when SingletonLock remains after
+    a killed/aborted browser. Do not remove it when the recorded PID is alive.
+    """
+    try:
+        lock_path = profile_dir / "SingletonLock"
+        if not lock_path.exists() and not lock_path.is_symlink():
+            return
+        target = ""
+        try:
+            target = str(lock_path.readlink()) if lock_path.is_symlink() else lock_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            target = ""
+        match = re.search(r"-(\d+)$", target.strip())
+        if match:
+            pid = int(match.group(1))
+            if pid > 0 and Path(f"/proc/{pid}").exists():
+                return
+        for name in ("SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"):
+            try:
+                (profile_dir / name).unlink(missing_ok=True)
+            except Exception:
+                pass
+    except Exception:
+        return
+
+
 def _launch_context(
     *,
     profile_dir: Path,
@@ -650,6 +679,7 @@ def _launch_context(
     if sync_playwright is None:
         raise GptWebExecutionError("playwright 패키지가 없어 GPT 웹 실행기를 사용할 수 없습니다.", code="PLAYWRIGHT_IMPORT_ERROR")
 
+    _cleanup_stale_chrome_profile_locks(profile_dir)
     playwright = sync_playwright().start()
     if cdp_url:
         try:
