@@ -146,14 +146,25 @@ DOMAIN_CONFIGS = [
     },
 ]
 
+# 기본 운영은 항상 전체 도메인 발행입니다.
+# 과거 LONGTAIL_DOMAINS 환경변수가 남아 있으면 특정 도메인만 발행되는 문제가 있었기 때문에,
+# 명시적으로 LONGTAIL_ALLOW_DOMAIN_FILTER=1 을 준 경우에만 필터를 허용합니다.
 requested_domains_raw = os.environ.get('LONGTAIL_DOMAINS', '').strip()
-if requested_domains_raw:
+allow_domain_filter = os.environ.get('LONGTAIL_ALLOW_DOMAIN_FILTER', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+if requested_domains_raw and allow_domain_filter:
     requested_domains = [item.strip() for item in requested_domains_raw.split(',') if item.strip()]
     known_domains = {item['domain'] for item in DOMAIN_CONFIGS}
     unknown_domains = sorted(set(requested_domains) - known_domains)
     if unknown_domains:
         raise SystemExit(f"unknown LONGTAIL_DOMAINS: {', '.join(unknown_domains)}")
     DOMAIN_CONFIGS = [item for item in DOMAIN_CONFIGS if item['domain'] in requested_domains]
+elif requested_domains_raw:
+    print(json.dumps({
+        'status': 'domain_filter_ignored',
+        'reason': 'publish_all_domains_by_default',
+        'LONGTAIL_DOMAINS': requested_domains_raw,
+        'hint': 'set LONGTAIL_ALLOW_DOMAIN_FILTER=1 to intentionally restrict domains',
+    }, ensure_ascii=False, indent=2))
 
 
 def _print_json(payload: dict) -> None:
