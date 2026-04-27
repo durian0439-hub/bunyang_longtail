@@ -3127,7 +3127,7 @@ def publish_bundle_to_naver(
         except Exception:
             pass
 
-    blog_root = Path("/home/kj/app/bunyang/blog-cheongyak-automation")
+    blog_root = Path(os.getenv("LONGTAIL_BLOG_AUTOMATION_ROOT", "/home/kj/app/bunyang/blog-cheongyak-automation"))
     if str(blog_root) not in sys.path:
         sys.path.insert(0, str(blog_root))
 
@@ -3140,7 +3140,7 @@ def publish_bundle_to_naver(
         env_overrides["NAVER_BLOG_CATEGORY_NAME"] = str(category_name).strip() or None
     previous_env = {key: os.environ.get(key) for key in env_overrides}
 
-    out_dir = blog_root / "outputs" / "publish_longtail"
+    out_dir = Path(os.getenv("LONGTAIL_BLOG_PUBLISH_OUTPUT_DIR", str(blog_root / "outputs" / "publish_longtail")))
     try:
         for key, value in env_overrides.items():
             if value is None:
