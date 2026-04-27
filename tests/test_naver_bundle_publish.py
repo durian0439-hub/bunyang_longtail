@@ -722,22 +722,12 @@ A. 서류와 현장을 다시 확인해야 합니다.
                     category_name="How To 경매",
                 )
 
-        self.assertEqual(result["video_publish"]["project"], "longtail")
-        self.assertEqual(result["video_publish"]["blog_category"], "How To 경매")
-        self.assertIn("[[VIDEO:1]]", seen_publish_kwargs["body_markdown"])
+        self.assertEqual(result["video_publish"]["status"], "skipped")
+        self.assertEqual(result["video_publish"]["reason"], "longtail_video_qa_freeze")
+        self.assertNotIn("[[VIDEO:1]]", seen_publish_kwargs["body_markdown"])
         self.assertEqual(seen_publish_kwargs["videos"], [])
-        self.assertEqual(seen_publish_kwargs["clip_urls"], ["https://clip.naver.com/@91koqb79em"])
-        self.assertIn("--project", seen_cmd)
-        self.assertIn("longtail", seen_cmd)
-        self.assertIn("--blog-category", seen_cmd)
-        self.assertIn("How To 경매", seen_cmd)
-        self.assertEqual(seen_cmd.count("--skip-youtube"), 0)
-        self.assertIn("--with-tts", seen_cmd)
-        self.assertIn("--upload-naver-clip", seen_cmd)
-        self.assertIn("--naver-clip-visibility", seen_cmd)
-        self.assertEqual(seen_cmd[seen_cmd.index("--naver-clip-visibility") + 1], "public")
-        self.assertIn("--upload-tiktok", seen_cmd)
-        self.assertEqual(seen_cmd[seen_cmd.index("--tiktok-privacy-level") + 1], "SELF_ONLY")
+        self.assertEqual(seen_publish_kwargs["clip_urls"], [])
+        self.assertEqual(seen_cmd, [])
 
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

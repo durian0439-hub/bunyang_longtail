@@ -2788,11 +2788,16 @@ def _longtail_blog_category(domain: str | None, fallback: str | None = None) -> 
     return "How To 분양"
 
 
+LONGTAIL_VIDEO_QA_FREEZE = True  # 2026-04-27: TTS 대본/썸네일 검수 전까지 영상 생성·업로드·본문 삽입 코드단 중단
+
+
 def _render_longtail_video_for_blog(
     *,
     publish_bundle: PublishBundle,
     category_name: str | None,
 ) -> dict[str, Any]:
+    if LONGTAIL_VIDEO_QA_FREEZE:
+        return {"status": "skipped", "reason": "longtail_video_qa_freeze"}
     # 롱테일 블로그는 도메인(분양/경매/세금/대출)과 무관하게 썸네일 바로 아래에
     # 재생 가능한 영상 컴포넌트를 기본 삽입한다. 특정 점검 실행에서만 명시적으로 끌 수 있다.
     if not _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=True):
@@ -2883,6 +2888,8 @@ def _maybe_publish_longtail_video(
     category_name: str | None,
     reuse_existing_video: bool = False,
 ) -> dict[str, Any]:
+    if LONGTAIL_VIDEO_QA_FREEZE:
+        return {"status": "skipped", "reason": "longtail_video_qa_freeze"}
     if not _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False):
         return {"status": "skipped", "reason": "LONGTAIL_VIDEO_UPLOAD disabled"}
 
@@ -3060,7 +3067,8 @@ def publish_bundle_to_naver(
         )
 
     blog_video_mode = _clean(os.getenv("LONGTAIL_BLOG_VIDEO_MODE", "naver_clip_embed")).lower()
-    inline_video_enabled = _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=True)
+    # 2026-04-27 QA freeze: 본문 영상 삽입([[VIDEO]]/네이버클립 링크) 코드단 중단
+    inline_video_enabled = False if LONGTAIL_VIDEO_QA_FREEZE else _env_flag("LONGTAIL_BLOG_INLINE_VIDEO", default=True)
     inline_video_result: dict[str, Any] = {"status": "skipped", "reason": "naver_clip_embed_mode"}
     inline_videos: list[str] = []
     clip_urls: list[str] = []
