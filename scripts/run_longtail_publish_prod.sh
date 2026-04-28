@@ -309,8 +309,22 @@ for config in DOMAIN_CONFIGS:
         # 분양이 실패해도 경매는 반드시 이어서 실행한다. 마지막에만 실패 코드를 반환한다.
         continue
 
-_print_json({'status': 'cron_domain_summary', 'results': results})
-if any(item.get('status') == 'failed' for item in results):
+published_results = [item for item in results if item.get('status') == 'published']
+expected_domains = [item['domain'] for item in DOMAIN_CONFIGS]
+missing_or_incomplete = [
+    domain
+    for domain in expected_domains
+    if not any(item.get('domain') == domain and item.get('status') == 'published' for item in results)
+]
+_print_json({
+    'status': 'cron_domain_summary',
+    'expected_domains': expected_domains,
+    'published_count': len(published_results),
+    'expected_count': len(expected_domains),
+    'missing_or_incomplete_domains': missing_or_incomplete,
+    'results': results,
+})
+if any(item.get('status') == 'failed' for item in results) or missing_or_incomplete:
     raise SystemExit(1)
 PY
 
