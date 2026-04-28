@@ -925,6 +925,86 @@ Q1. 바로 신청해도 되나요?
                 )
             self.assertFalse((Path(tmpdir) / "publish_bundle.json").exists())
 
+    def test_render_gpt_publish_assets_retries_transient_navigation_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            target,
+            "_build_gpt_publish_image_plans",
+            return_value=[
+                target.PublishImagePlan(
+                    slot="__after_title__",
+                    kind="thumbnail",
+                    label="대표 이미지",
+                    image_role="thumbnail",
+                    prompt_text="테스트 이미지",
+                )
+            ],
+        ), patch.object(target, "_is_visually_blank_publish_image", return_value=False), patch.object(target.time, "sleep") as sleep_mock, patch.object(
+            target.subprocess,
+            "run",
+            side_effect=[
+                SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr=json.dumps({"error": "nav timeout", "code": "GPT_WEB_NAVIGATION_TIMEOUT"}, ensure_ascii=False),
+                ),
+                SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"file_path": str(Path(tmpdir) / "ok.png")}, ensure_ascii=False),
+                    stderr="",
+                ),
+            ],
+        ) as run_mock, patch.dict(
+            os.environ,
+            {
+                "NAVER_BLOG_GPT_IMAGE_ATTEMPTS": "3",
+                "NAVER_BLOG_GPT_IMAGE_RETRY_BACKOFF_SEC": "0",
+                "NAVER_BLOG_GPT_IMAGE_COOLDOWN_SEC": "0",
+            },
+        ):
+            assets = target._render_gpt_publish_assets(
+                title="테스트 제목",
+                sections=[],
+                output_dir=tmpdir,
+                provider="gpt_web",
+            )
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(run_mock.call_count, 2)
+        first_cmd = run_mock.call_args_list[0].args[0]
+        second_cmd = run_mock.call_args_list[1].args[0]
+        self.assertNotEqual(first_cmd[first_cmd.index("--job-id") + 1], second_cmd[second_cmd.index("--job-id") + 1])
+        sleep_mock.assert_not_called()
+
+    def test_render_gpt_publish_assets_stops_on_challenge_without_wasting_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            target,
+            "_build_gpt_publish_image_plans",
+            return_value=[
+                target.PublishImagePlan(
+                    slot="__after_title__",
+                    kind="thumbnail",
+                    label="대표 이미지",
+                    image_role="thumbnail",
+                    prompt_text="테스트 이미지",
+                )
+            ],
+        ), patch.object(
+            target.subprocess,
+            "run",
+            return_value=SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=json.dumps({"error": "challenge", "code": "GPT_WEB_CHALLENGE"}, ensure_ascii=False),
+            ),
+        ) as run_mock, patch.dict(os.environ, {"NAVER_BLOG_GPT_IMAGE_ATTEMPTS": "3"}):
+            with self.assertRaisesRegex(RuntimeError, "GPT 이미지 생성 실패"):
+                target._render_gpt_publish_assets(
+                    title="테스트 제목",
+                    sections=[],
+                    output_dir=tmpdir,
+                    provider="gpt_web",
+                )
+        self.assertEqual(run_mock.call_count, 1)
+
     def test_parse_publish_sections_supports_markdown_headings(self) -> None:
         original_title, sections = parse_publish_sections(
             SPARSE_INSTITUTION_ARTICLE,

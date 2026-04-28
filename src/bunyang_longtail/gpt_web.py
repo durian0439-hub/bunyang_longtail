@@ -206,6 +206,36 @@ def _read_first_env_value(keys: list[str]) -> str:
 
 
 
+def _read_int_env(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = _strip_env_quotes(os.getenv(name, ""))
+    try:
+        value = int(raw) if raw else int(default)
+    except (TypeError, ValueError):
+        value = int(default)
+    if minimum is not None:
+        value = max(value, minimum)
+    if maximum is not None:
+        value = min(value, maximum)
+    return value
+
+
+
+def _chatgpt_navigation_timeout_ms() -> int:
+    return _read_int_env("GPT_WEB_NAVIGATION_TIMEOUT_SEC", 90, minimum=10, maximum=300) * 1000
+
+
+
+def _chatgpt_navigation_retries() -> int:
+    return _read_int_env("GPT_WEB_NAVIGATION_RETRIES", 2, minimum=1, maximum=5)
+
+
+
+def _chatgpt_navigation_retry_backoff_ms(attempt: int) -> int:
+    base_seconds = _read_int_env("GPT_WEB_NAVIGATION_RETRY_BACKOFF_SEC", 8, minimum=0, maximum=120)
+    return base_seconds * max(1, attempt) * 1000
+
+
+
 def _resolve_google_login_credentials() -> dict[str, str]:
     _load_env_candidates()
     return {
@@ -220,6 +250,36 @@ def _safe_page_url(page: Any) -> str:
         return str(page.url or "")
     except Exception:
         return ""
+
+
+
+def _goto_chatgpt_with_retries(page: Any, artifact_dir: Path) -> None:
+    timeout_ms = _chatgpt_navigation_timeout_ms()
+    retries = _chatgpt_navigation_retries()
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+            return
+        except PlaywrightTimeoutError as exc:
+            last_exc = exc
+            _take_artifacts(page, artifact_dir, f"goto_timeout_attempt_{attempt}")
+            if attempt >= retries:
+                break
+            backoff_ms = _chatgpt_navigation_retry_backoff_ms(attempt)
+            try:
+                page.wait_for_timeout(backoff_ms)
+            except Exception:
+                time.sleep(backoff_ms / 1000)
+            try:
+                page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+            except Exception:
+                pass
+    raise GptWebExecutionError(
+        f"ChatGPT 접속이 {timeout_ms // 1000}초 안에 완료되지 않았습니다. attempts={retries}, 마지막 오류: {last_exc}",
+        code="GPT_WEB_NAVIGATION_TIMEOUT",
+        artifact_dir=str(artifact_dir),
+    ) from last_exc
 
 
 
@@ -824,7 +884,7 @@ def _prepare_page(
             pass
         page.wait_for_timeout(1000)
     else:
-        page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=30000)
+        _goto_chatgpt_with_retries(page, artifact_dir)
         page.wait_for_timeout(1500)
     _take_artifacts(page, artifact_dir, "loaded")
     return page

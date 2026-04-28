@@ -24,6 +24,8 @@ def main() -> int:
     parser.add_argument('--image-role', required=True)
     parser.add_argument('--output-path', required=True)
     parser.add_argument('--artifact-root', required=True)
+    parser.add_argument('--wait-for-ready-seconds', type=int, default=240)
+    parser.add_argument('--response-timeout-seconds', type=int, default=600)
     args = parser.parse_args()
 
     try:
@@ -36,8 +38,8 @@ def main() -> int:
             image_role=args.image_role,
             output_path=args.output_path,
             headed=True,
-            wait_for_ready_seconds=180,
-            response_timeout_seconds=600,
+            wait_for_ready_seconds=args.wait_for_ready_seconds,
+            response_timeout_seconds=args.response_timeout_seconds,
             artifact_root=args.artifact_root,
         )
     except GptWebExecutionError as exc:

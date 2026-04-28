@@ -40,6 +40,7 @@ from bunyang_longtail.gpt_web import (
     _has_new_generated_image,
     _looks_like_complete_article,
     _looks_like_generated_image_src,
+    _prepare_page,
     _resolve_google_login_credentials,
     _wait_for_image_response,
     build_image_prompt,
@@ -1392,6 +1393,81 @@ DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
         code, message = result
         self.assertEqual(code, "GPT_WEB_XSERVER_MISSING")
         self.assertIn("xvfb-run", message)
+
+    def test_prepare_page_retries_chatgpt_navigation_timeout(self) -> None:
+        class DummyPage:
+            def __init__(self) -> None:
+                self.goto_calls: list[tuple[str, int | None]] = []
+                self.waits: list[int] = []
+
+            def set_default_timeout(self, _timeout: int) -> None:
+                pass
+
+            def goto(self, url: str, **kwargs):
+                self.goto_calls.append((url, kwargs.get("timeout")))
+                chatgpt_calls = [call for call in self.goto_calls if call[0] == "https://chatgpt.com/"]
+                if url == "https://chatgpt.com/" and len(chatgpt_calls) == 1:
+                    raise TimeoutError("first navigation timeout")
+                return None
+
+            def wait_for_timeout(self, ms: int) -> None:
+                self.waits.append(ms)
+
+        class DummyContext:
+            def __init__(self) -> None:
+                self.page = DummyPage()
+                self.pages = [self.page]
+
+            def new_page(self):
+                return self.page
+
+        artifact_dir = Path(self.tmpdir.name) / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        context = DummyContext()
+        with patch.dict(
+            os.environ,
+            {
+                "GPT_WEB_NAVIGATION_TIMEOUT_SEC": "90",
+                "GPT_WEB_NAVIGATION_RETRIES": "2",
+                "GPT_WEB_NAVIGATION_RETRY_BACKOFF_SEC": "0",
+            },
+        ), patch("bunyang_longtail.gpt_web.PlaywrightTimeoutError", TimeoutError), patch("bunyang_longtail.gpt_web._take_artifacts"):
+            _prepare_page(context, artifact_dir)
+        chatgpt_calls = [call for call in context.page.goto_calls if call[0] == "https://chatgpt.com/"]
+        self.assertEqual(len(chatgpt_calls), 2)
+        self.assertTrue(all(timeout == 90000 for _url, timeout in chatgpt_calls))
+
+    def test_prepare_page_raises_navigation_timeout_with_specific_code(self) -> None:
+        class DummyPage:
+            def set_default_timeout(self, _timeout: int) -> None:
+                pass
+
+            def goto(self, url: str, **_kwargs):
+                if url == "https://chatgpt.com/":
+                    raise TimeoutError("navigation timeout")
+                return None
+
+            def wait_for_timeout(self, _ms: int) -> None:
+                pass
+
+        class DummyContext:
+            pages = [DummyPage()]
+
+            def new_page(self):
+                return self.pages[0]
+
+        artifact_dir = Path(self.tmpdir.name) / "artifacts_timeout"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        with patch.dict(
+            os.environ,
+            {
+                "GPT_WEB_NAVIGATION_TIMEOUT_SEC": "10",
+                "GPT_WEB_NAVIGATION_RETRIES": "1",
+            },
+        ), patch("bunyang_longtail.gpt_web.PlaywrightTimeoutError", TimeoutError), patch("bunyang_longtail.gpt_web._take_artifacts"):
+            with self.assertRaises(GptWebExecutionError) as exc_info:
+                _prepare_page(DummyContext(), artifact_dir)
+        self.assertEqual(exc_info.exception.code, "GPT_WEB_NAVIGATION_TIMEOUT")
 
     def test_detect_page_state_prefers_visible_composer_over_hidden_challenge_markup(self) -> None:
         class DummyPage:

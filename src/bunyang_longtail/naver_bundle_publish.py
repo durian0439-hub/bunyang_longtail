@@ -121,6 +121,45 @@ THUMBNAIL_CHIPS = {
 
 NAVER_TAG_LIMIT = 30
 
+TRANSIENT_GPT_WEB_IMAGE_ERROR_CODES = {
+    "GPT_WEB_TIMEOUT",
+    "GPT_WEB_NAVIGATION_TIMEOUT",
+    "GPT_WEB_IMAGE_TIMEOUT",
+}
+NON_RETRYABLE_GPT_WEB_IMAGE_ERROR_CODES = {
+    "GPT_WEB_CHALLENGE",
+    "GPT_WEB_LOGIN_REQUIRED",
+    "GPT_WEB_XSERVER_MISSING",
+}
+
+
+def _env_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = str(os.getenv(name, "")).strip()
+    try:
+        value = int(raw) if raw else int(default)
+    except (TypeError, ValueError):
+        value = int(default)
+    if minimum is not None:
+        value = max(value, minimum)
+    if maximum is not None:
+        value = min(value, maximum)
+    return value
+
+
+
+def _parse_json_error_detail(text: str) -> dict[str, Any]:
+    for line in reversed((text or "").splitlines()):
+        candidate = line.strip()
+        if not candidate.startswith("{") or not candidate.endswith("}"):
+            continue
+        try:
+            data = json.loads(candidate)
+        except Exception:
+            continue
+        return data if isinstance(data, dict) else {}
+    return {}
+
+
 DEFAULT_TAGS = [
     "청약",
     "분양청약",
@@ -1840,41 +1879,72 @@ def _render_gpt_publish_assets(
         if output_path.exists() and output_path.stat().st_size > 100_000 and not _is_visually_blank_publish_image(output_path):
             assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=str(output_path.resolve())))
             continue
-        cmd = [
-            sys.executable,
-            str(ROOT / "scripts" / "generate_publish_image.py"),
-            "--job-id", str(job_seed + index),
-            "--profile-name", PUBLISH_GPT_IMAGE_PROFILE,
-            "--prompt-text", plan.prompt_text,
-            "--title", title,
-            "--excerpt", excerpt,
-            "--image-role", plan.image_role,
-            "--output-path", str(output_path),
-            "--artifact-root", str(GPT_WEB_ARTIFACT_DIR / "naver_publish"),
-        ]
-        timeout_seconds = int(str(os.getenv("NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC", "480")).strip() or "480")
+        ready_seconds = _env_int("NAVER_BLOG_GPT_IMAGE_READY_SEC", 240, minimum=30, maximum=900)
+        response_seconds = _env_int("NAVER_BLOG_GPT_IMAGE_RESPONSE_SEC", 600, minimum=60, maximum=1800)
+        timeout_seconds = _env_int(
+            "NAVER_BLOG_GPT_IMAGE_TIMEOUT_SEC",
+            max(900, ready_seconds + response_seconds + 180),
+            minimum=180,
+            maximum=2400,
+        )
+        attempts = _env_int("NAVER_BLOG_GPT_IMAGE_ATTEMPTS", 3, minimum=1, maximum=5)
+        retry_backoff_seconds = _env_int("NAVER_BLOG_GPT_IMAGE_RETRY_BACKOFF_SEC", 20, minimum=0, maximum=300)
+        cooldown_seconds = _env_int("NAVER_BLOG_GPT_IMAGE_COOLDOWN_SEC", 4, minimum=0, maximum=120)
         last_detail = ""
-        for attempt in range(1, 3):
+        for attempt in range(1, attempts + 1):
+            cmd = [
+                sys.executable,
+                str(ROOT / "scripts" / "generate_publish_image.py"),
+                "--job-id", str((job_seed + index) * 10 + attempt),
+                "--profile-name", PUBLISH_GPT_IMAGE_PROFILE,
+                "--prompt-text", plan.prompt_text,
+                "--title", title,
+                "--excerpt", excerpt,
+                "--image-role", plan.image_role,
+                "--output-path", str(output_path),
+                "--artifact-root", str(GPT_WEB_ARTIFACT_DIR / "naver_publish"),
+                "--wait-for-ready-seconds", str(ready_seconds),
+                "--response-timeout-seconds", str(response_seconds),
+            ]
             try:
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
             except subprocess.TimeoutExpired:
-                last_detail = f"timeout={timeout_seconds}s, attempt={attempt}"
+                last_detail = f"timeout={timeout_seconds}s, attempt={attempt}/{attempts}"
+                if attempt < attempts and retry_backoff_seconds:
+                    time.sleep(retry_backoff_seconds * attempt)
                 continue
             if proc.returncode != 0:
-                last_detail = (proc.stderr or proc.stdout or "").strip()
+                raw_detail = (proc.stderr or proc.stdout or "").strip()
+                error_detail = _parse_json_error_detail(raw_detail)
+                error_code = str(error_detail.get("code") or "").strip()
+                last_detail = raw_detail
+                if error_code in NON_RETRYABLE_GPT_WEB_IMAGE_ERROR_CODES:
+                    break
+                if attempt < attempts and (not error_code or error_code in TRANSIENT_GPT_WEB_IMAGE_ERROR_CODES):
+                    if retry_backoff_seconds:
+                        time.sleep(retry_backoff_seconds * attempt)
+                    continue
                 continue
             try:
                 execution = json.loads(proc.stdout)
             except Exception:
                 last_detail = "invalid json response"
+                if attempt < attempts and retry_backoff_seconds:
+                    time.sleep(retry_backoff_seconds * attempt)
                 continue
             resolved_path = str(Path(execution["file_path"]).resolve())
             if _is_visually_blank_publish_image(resolved_path):
                 last_detail = f"흰색에 가까운 빈 이미지로 판정됨 ({resolved_path})"
+                if attempt < attempts and retry_backoff_seconds:
+                    time.sleep(retry_backoff_seconds * attempt)
                 continue
             assets.append(PublishAsset(slot=plan.slot, kind=plan.kind, label=plan.label, path=resolved_path))
+            if cooldown_seconds and index < len(plans):
+                time.sleep(cooldown_seconds)
             break
         else:
+            raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, {last_detail}")
+        if len(assets) < index:
             raise RuntimeError(f"GPT 이미지 생성 실패: {plan.label}, provider={resolved_provider}, {last_detail}")
     return assets
 
