@@ -42,6 +42,8 @@ from bunyang_longtail.gpt_web import (
     _looks_like_generated_image_src,
     _prepare_page,
     _resolve_google_login_credentials,
+    _submit_prompt,
+    _try_start_new_chat,
     _wait_for_image_response,
     build_image_prompt,
     build_text_prompt,
@@ -1523,6 +1525,88 @@ DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
             "bunyang_longtail.gpt_web._count_locators", return_value=0
         ):
             self.assertEqual(_detect_page_state(DummyPage()), "login_required")
+
+    def test_try_start_new_chat_skips_click_on_blank_root_page(self) -> None:
+        class DummyPage:
+            url = "https://chatgpt.com/"
+
+        clicked = {"value": False}
+
+        class DummyLocator:
+            def click(self, **_kwargs) -> None:
+                clicked["value"] = True
+
+        with patch("bunyang_longtail.gpt_web._count_locators", return_value=0), patch(
+            "bunyang_longtail.gpt_web._first_visible", return_value=("a:has-text('새 채팅')", DummyLocator())
+        ):
+            _try_start_new_chat(DummyPage())
+        self.assertFalse(clicked["value"])
+
+    def test_submit_prompt_raises_when_send_does_not_start_conversation(self) -> None:
+        class DummyKeyboard:
+            def __init__(self) -> None:
+                self.presses: list[str] = []
+
+            def press(self, key: str) -> None:
+                self.presses.append(key)
+
+        class DummyPage:
+            url = "https://chatgpt.com/"
+
+            def __init__(self) -> None:
+                self.keyboard = DummyKeyboard()
+
+            def wait_for_timeout(self, _ms: int) -> None:
+                pass
+
+        class DummyLocator:
+            def is_enabled(self, **_kwargs) -> bool:
+                return True
+
+            def click(self, **_kwargs) -> None:
+                pass
+
+        page = DummyPage()
+        with patch("bunyang_longtail.gpt_web._first_visible", return_value=("button", DummyLocator())), patch(
+            "bunyang_longtail.gpt_web._has_stop_button", return_value=False
+        ), patch("bunyang_longtail.gpt_web._count_locators", return_value=0), patch(
+            "bunyang_longtail.gpt_web.time.time", side_effect=[0, 10, 20, 30, 40, 50]
+        ):
+            with self.assertRaises(GptWebExecutionError) as exc_info:
+                _submit_prompt(page, before_count=0)
+        self.assertEqual(exc_info.exception.code, "GPT_WEB_SUBMIT_FAILED")
+        self.assertEqual(page.keyboard.presses, ["Enter", "Control+Enter"])
+
+    def test_submit_prompt_accepts_increased_conversation_turn_after_click(self) -> None:
+        class DummyKeyboard:
+            def press(self, _key: str) -> None:
+                raise AssertionError("keyboard fallback should not be used")
+
+        class DummyPage:
+            url = "https://chatgpt.com/c/test"
+            keyboard = DummyKeyboard()
+
+            def wait_for_timeout(self, _ms: int) -> None:
+                pass
+
+        class DummyLocator:
+            def __init__(self) -> None:
+                self.clicked = False
+
+            def is_enabled(self, **_kwargs) -> bool:
+                return True
+
+            def click(self, **_kwargs) -> None:
+                self.clicked = True
+
+        locator = DummyLocator()
+        with patch("bunyang_longtail.gpt_web._first_visible", return_value=("button", locator)), patch(
+            "bunyang_longtail.gpt_web._has_stop_button", return_value=False
+        ), patch("bunyang_longtail.gpt_web._count_locators", return_value=2), patch(
+            "bunyang_longtail.gpt_web.time.time", side_effect=[0, 1]
+        ):
+            _submit_prompt(DummyPage(), before_count=1)
+        self.assertTrue(locator.clicked)
 
     def test_resolve_google_login_credentials_reads_env_candidate_file(self) -> None:
         env_path = Path(self.tmpdir.name) / ".env"

@@ -977,13 +977,24 @@ def _wait_until_ready(page: Any, artifact_dir: Path, wait_for_ready_seconds: int
 
 
 def _try_start_new_chat(page: Any) -> None:
+    # 이미 빈 새 채팅 화면이면 사이드바의 "새 채팅"을 다시 누르지 않는다.
+    # ChatGPT가 라우팅을 늦게 완료하는 순간에 입력을 시작하면 프롬프트가
+    # 사라진 채 제출 대기만 길어질 수 있다.
+    current_url = _safe_page_url(page).split("?", 1)[0].rstrip("/").lower()
+    if current_url in {"https://chatgpt.com", "https://www.chatgpt.com"} and _count_locators(page, ASSISTANT_TURN_SELECTORS) == 0:
+        return
     visible = _first_visible(page, NEW_CHAT_SELECTORS)
     if not visible:
         return
     _, locator = visible
     try:
         locator.click(timeout=3000)
-        page.wait_for_timeout(1000)
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if _detect_page_state(page) == "ready":
+                page.wait_for_timeout(500)
+                return
+            page.wait_for_timeout(500)
     except Exception:
         pass
 
@@ -1075,14 +1086,25 @@ def _fill_prompt(page: Any, prompt_text: str) -> None:
 
 
 
-def _submit_prompt(page: Any) -> None:
-    def _composer_has_text() -> bool:
-        return bool(_read_composer_text(page))
-
+def _submit_prompt(page: Any, *, before_count: int | None = None) -> None:
     def _submission_started() -> bool:
         if _has_stop_button(page):
             return True
-        return not _composer_has_text()
+        current_count = _count_locators(page, ASSISTANT_TURN_SELECTORS)
+        if before_count is not None and current_count > before_count:
+            return True
+        current_url = _safe_page_url(page).lower()
+        if "/c/" in current_url and current_count >= max(1, before_count or 0):
+            return True
+        return False
+
+    def _wait_for_submission_started(timeout_ms: int = 5000) -> bool:
+        deadline = time.time() + (timeout_ms / 1000)
+        while time.time() < deadline:
+            if _submission_started():
+                return True
+            page.wait_for_timeout(300)
+        return False
 
     visible = _first_visible(page, SEND_BUTTON_SELECTORS)
     if visible:
@@ -1090,16 +1112,20 @@ def _submit_prompt(page: Any) -> None:
         try:
             if locator.is_enabled(timeout=1000):
                 locator.click(timeout=3000)
-                page.wait_for_timeout(1200)
-                if _submission_started():
+                if _wait_for_submission_started():
                     return
         except Exception:
             pass
     page.keyboard.press("Enter")
-    page.wait_for_timeout(1200)
-    if _submission_started():
+    if _wait_for_submission_started():
         return
     page.keyboard.press("Control+Enter")
+    if _wait_for_submission_started():
+        return
+    raise GptWebExecutionError(
+        "ChatGPT 프롬프트 전송이 시작되지 않았습니다. 입력창이 비었거나 새 채팅 라우팅 중 전송이 무시됐을 수 있습니다.",
+        code="GPT_WEB_SUBMIT_FAILED",
+    )
 
 
 
@@ -1369,7 +1395,7 @@ def execute_text_job(
         prompt_text = build_text_prompt(_load_json(prompt_payload))
         (artifact_dir / "request_prompt.txt").write_text(prompt_text, encoding="utf-8")
         _fill_prompt(page, prompt_text)
-        _submit_prompt(page)
+        _submit_prompt(page, before_count=before_count)
         _take_artifacts(page, artifact_dir, "submitted")
         article_markdown = _wait_for_text_response(
             page,
@@ -1468,7 +1494,7 @@ def execute_image_job(
         )
         (artifact_dir / "request_prompt.txt").write_text(final_prompt, encoding="utf-8")
         _fill_prompt(page, final_prompt)
-        _submit_prompt(page)
+        _submit_prompt(page, before_count=before_count)
         _take_artifacts(page, artifact_dir, "submitted")
         image_result = _wait_for_image_response(
             page,
