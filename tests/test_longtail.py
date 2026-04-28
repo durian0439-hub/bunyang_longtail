@@ -1151,6 +1151,8 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("안전합니다", rules)
         self.assertIn("그렇습니다.", rules)
         self.assertIn("도입부 첫 2문단", rules)
+        self.assertIn("검색 누적형 자산", rules)
+        self.assertIn("홈판 낚시", rules)
         self.assertNotIn("본문 끝에는 누가 이 전략이 맞는지", rules)
 
     def test_build_text_prompt_uses_neutral_action_guide_phrase(self) -> None:
