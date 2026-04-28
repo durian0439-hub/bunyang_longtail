@@ -279,6 +279,19 @@ A. 서류와 현장을 다시 확인해야 합니다.
                 domain="auction",
             )
 
+    def test_tax_publish_validation_allows_auction_tax_document_context(self) -> None:
+        target._validate_domain_publish_markdown(
+            "# 경매 낙찰 취득세\n\n취득세 계산 전 매각물건명세서와 낙찰 자료를 관할 지자체에 확인합니다.",
+            domain="tax",
+        )
+
+    def test_tax_publish_validation_still_blocks_unrelated_auction_terms(self) -> None:
+        with self.assertRaisesRegex(ValueError, "세금 발행 본문"):
+            target._validate_domain_publish_markdown(
+                "# 부동산 세금 글\n\n최종 판단은 인도명령과 매각물건명세서만 보면 됩니다.",
+                domain="tax",
+            )
+
     def test_persist_publish_result_marks_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.sqlite3"

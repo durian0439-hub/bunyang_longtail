@@ -2455,7 +2455,16 @@ def _validate_domain_publish_markdown(markdown: str, *, domain: str | None = Non
         "loan": ["매각물건명세서", "인도명령", "세무조사 피하는 법"],
     }
     forbidden_terms = forbidden_map[content_domain]
-    found = [term for term in forbidden_terms if term in str(markdown or "")]
+    text = str(markdown or "")
+    found = [term for term in forbidden_terms if term in text]
+    if content_domain == "tax" and found:
+        # 경매 낙찰 취득세 글에서는 매각물건명세서가 과세표준 확인 자료로
+        # 자연스럽게 등장한다. 세금 맥락이 명확한 경우에는 도메인 혼입으로 보지 않는다.
+        has_auction_tax_context = any(token in text for token in ["경매", "낙찰", "공매"]) and any(
+            token in text for token in ["취득세", "양도세", "세금", "지방세"]
+        )
+        if has_auction_tax_context:
+            found = [term for term in found if term != "매각물건명세서"]
     if found:
         if content_domain == "auction":
             raise ValueError(f"경매 발행 본문에 청약 도메인 용어가 섞였습니다: {', '.join(found)}")
