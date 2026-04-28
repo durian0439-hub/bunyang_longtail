@@ -929,6 +929,55 @@ def _try_start_new_chat(page: Any) -> None:
 
 
 
+def _read_composer_text(page: Any) -> str:
+    target = _first_visible(page, COMPOSER_SELECTORS)
+    locators = []
+    if target:
+        locators.append(target[1])
+    try:
+        locators.append(page.locator('[contenteditable="true"], textarea').last)
+    except Exception:
+        pass
+    for locator in locators:
+        try:
+            value = locator.evaluate(
+                """(el) => {
+                    if ('value' in el) return el.value || '';
+                    return el.innerText || el.textContent || '';
+                }""",
+                timeout=1000,
+            )
+            if value and value.strip():
+                return value.strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _force_set_composer_text(page: Any, prompt_text: str) -> None:
+    target = _first_visible(page, COMPOSER_SELECTORS)
+    if target:
+        _, locator = target
+        locator.evaluate(
+            """(el, value) => {
+                if ('value' in el) {
+                    el.value = value;
+                } else {
+                    el.innerText = value;
+                    el.textContent = value;
+                }
+                el.dispatchEvent(new InputEvent('input', {
+                    bubbles: true,
+                    inputType: 'insertText',
+                    data: value
+                }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }""",
+            prompt_text,
+            timeout=3000,
+        )
+
+
 def _fill_prompt(page: Any, prompt_text: str) -> None:
     target = _first_visible(page, COMPOSER_SELECTORS)
     if not target:
@@ -949,19 +998,48 @@ def _fill_prompt(page: Any, prompt_text: str) -> None:
     else:
         page.keyboard.press("Control+A")
         page.keyboard.insert_text(prompt_text)
+    page.wait_for_timeout(500)
+    if not _read_composer_text(page):
+        _force_set_composer_text(page, prompt_text)
+        page.wait_for_timeout(500)
+    if not _read_composer_text(page):
+        locator.click(timeout=3000)
+        page.keyboard.press("Control+A")
+        page.keyboard.insert_text(prompt_text)
+        page.wait_for_timeout(500)
+    if not _read_composer_text(page):
+        raise GptWebExecutionError(
+            "ChatGPT 입력창에 프롬프트를 입력하지 못했습니다.",
+            code="GPT_WEB_COMPOSER_FILL_FAILED",
+        )
 
 
 
 def _submit_prompt(page: Any) -> None:
+    def _composer_has_text() -> bool:
+        return bool(_read_composer_text(page))
+
+    def _submission_started() -> bool:
+        if _has_stop_button(page):
+            return True
+        return not _composer_has_text()
+
     visible = _first_visible(page, SEND_BUTTON_SELECTORS)
     if visible:
         _, locator = visible
         try:
-            locator.click(timeout=3000)
-            return
+            if locator.is_enabled(timeout=1000):
+                locator.click(timeout=3000)
+                page.wait_for_timeout(1200)
+                if _submission_started():
+                    return
         except Exception:
             pass
     page.keyboard.press("Enter")
+    page.wait_for_timeout(1200)
+    if _submission_started():
+        return
+    page.keyboard.press("Control+Enter")
 
 
 
