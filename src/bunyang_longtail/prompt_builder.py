@@ -27,6 +27,40 @@ LONGTAIL_INFO_BLOG_FORMAT = {
 }
 
 
+BASE_DATA_DELIVERY_REQUIREMENTS = [
+    "상단 요약에는 결론만 쓰지 말고 기준일, 대상자 조건, 공식 확인 경로 중 최소 2개를 함께 넣습니다.",
+    "본문 초반 500자 안에 독자가 바로 가져갈 수 있는 숫자·기준일·서류·확인처 중 최소 3개를 넣습니다.",
+    "체크리스트는 '무엇을 확인 / 어디서 확인 / 왜 필요한지'가 보이게 씁니다.",
+    "FAQ는 본문 반복이 아니라 독자가 다음 단계에서 막힐 질문을 해결합니다.",
+]
+
+
+DOMAIN_DATA_DELIVERY_REQUIREMENTS = {
+    AUCTION_DOMAIN: [
+        "상단 요약 또는 첫 본문에 사건번호·소재지·면적·감정가·최저가·입찰보증금처럼 물건 기본정보 항목명을 보여줍니다. 실제 수치를 모르면 '법원경매정보에서 확인'으로 씁니다.",
+        "권리관계, 임차인·배당요구종기, 점유·명도, 잔금·대출, 입찰가 상한을 각각 별도 판단 축으로 다룹니다.",
+        "입찰가 산정은 실거래가·전세가·낙찰가율·수리비·명도비·인수보증금·취득세를 빼고 상한을 정하는 흐름으로 설명합니다.",
+        "확인 서류는 법원경매정보, 매각물건명세서, 현황조사서, 감정평가서, 등기부등본, 전입세대열람을 주제에 맞게 넣습니다.",
+    ],
+    TAX_DOMAIN: [
+        "세금별로 기준금액, 기준일, 신고처, 주의점을 표나 짧은 묶음으로 보여줍니다.",
+        "취득세·재산세·종부세·양도세 중 주제와 연결되는 세금은 언제 발생하는지 먼저 구분합니다.",
+        "홈택스·위택스·국세청·지자체 중 실제 확인 경로를 넣고, 세율·감면·비과세는 개인 조건별 변동 가능성을 함께 씁니다.",
+        "체크리스트에는 주택 수, 보유기간, 거주기간, 명의, 신고기한 중 주제에 맞는 항목을 포함합니다.",
+    ],
+    LOAN_DOMAIN: [
+        "상단 요약에 대출 종류, 한도에 영향을 주는 변수, 상담 전 준비서류를 먼저 보여줍니다.",
+        "DSR·LTV·DTI, 소득, 기존 대출, 담보가치, 실행일을 각각 확인 축으로 나눕니다.",
+        "한도·금리·승인을 단정하지 말고 HF·주택도시기금·금감원·은행 상담 확인 경로를 넣습니다.",
+        "체크리스트에는 소득증빙, 기존 대출, 잔금일, 신용 변동, 중도상환수수료를 포함합니다.",
+    ],
+}
+
+
+def _data_delivery_requirements(domain: str) -> list[str]:
+    return [*BASE_DATA_DELIVERY_REQUIREMENTS, *DOMAIN_DATA_DELIVERY_REQUIREMENTS.get(domain, [])]
+
+
 def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> dict[str, Any]:
     domain = str(cluster.get("domain") or DEFAULT_DOMAIN)
     outline = json.loads(cluster["outline_json"])
@@ -59,6 +93,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
         "required_sections": NAVER_SEO_SECTIONS,
         "outline": outline,
         "content_format": LONGTAIL_INFO_BLOG_FORMAT,
+        "data_delivery_requirements": _data_delivery_requirements(domain),
         "writing_rules": [
             "글 전체는 롱테일 정보 전달형 블로그 글이어야 합니다. 검색자가 궁금해한 한 가지 질문에 먼저 답하고, 확인 순서와 판단 기준을 뒤에서 넓혀 갑니다.",
             "이 글은 홈판 즉시 노출용이 아니라 검색 누적형 자산입니다. 과한 이슈몰이보다 검색자가 저장하고 다시 볼 수 있는 조건, 예외, 확인 순서를 우선합니다.",

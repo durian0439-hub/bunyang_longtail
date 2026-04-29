@@ -32,6 +32,7 @@ from bunyang_longtail.cron_publish import (
     select_publish_candidate,
 )
 from bunyang_longtail.prompt_builder import build_prompt_package
+from bunyang_longtail.article_quality import score_article_quality
 from bunyang_longtail.database import connect, init_db, migrate_db
 from bunyang_longtail.gpt_web import (
     GptWebExecutionError,
@@ -439,6 +440,58 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIsNotNone(candidate)
         self.assertEqual(candidate["family"], "권리분석")
         self.assertEqual(candidate["primary_keyword"], "말소기준권리")
+
+    def test_auction_select_publish_candidate_prefers_secondary_scenario_diversity(self) -> None:
+        with connect(self.db_path) as conn:
+            variant_ids = {}
+            rows = [
+                ("published", "경매 사이트", "법원경매정보", "가능여부", "공부 순서를 잡을 때"),
+                ("same_pattern", "무료 경매 사이트", "법원경매정보", "가능여부", "공부 순서를 잡을 때"),
+                ("different_pattern", "말소기준권리", "권리분석", "실수방지", "입찰 전 점검"),
+            ]
+            for key, primary_keyword, secondary_keyword, intent, scenario in rows:
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        domain, semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES ('auction', ?, '경매기초', ?, ?, '경매초보', ?, ?, '비교', 10000, '[]', '{}')
+                    """,
+                    (f"auction-secondary-diversity-{key}", primary_keyword, secondary_keyword, intent, scenario),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', ?, ?, 100, '{}', 'queued')
+                    """,
+                    (
+                        cluster_id,
+                        f"auction-secondary-diversity-variant-{key}",
+                        f"{primary_keyword} 테스트",
+                        f"auction-secondary-diversity-{key}",
+                    ),
+                )
+                variant_ids[key] = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                """
+                UPDATE topic_variant
+                SET status = 'published'
+                WHERE id NOT IN (?, ?, ?)
+                  AND cluster_id IN (SELECT id FROM topic_cluster WHERE domain = 'auction')
+                """,
+                (variant_ids["published"], variant_ids["same_pattern"], variant_ids["different_pattern"]),
+            )
+
+        mark_published(self.db_path, variant_ids["published"], "https://blog.naver.com/example/auction-secondary-diversity")
+
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn, domain="auction")
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["id"], variant_ids["different_pattern"])
+        self.assertEqual(candidate["secondary_keyword"], "권리분석")
+        self.assertEqual(candidate["scenario"], "입찰 전 점검")
 
     def test_select_publish_candidate_scopes_published_title_by_domain(self) -> None:
         with connect(self.db_path) as conn:
@@ -1154,6 +1207,31 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("검색 누적형 자산", rules)
         self.assertIn("홈판 낚시", rules)
         self.assertNotIn("본문 끝에는 누가 이 전략이 맞는지", rules)
+
+    def test_build_prompt_package_includes_domain_data_delivery_requirements(self) -> None:
+        cluster = {
+            "domain": "auction",
+            "outline_json": json.dumps([{"heading": "상단 요약", "points": ["핵심"]}], ensure_ascii=False),
+            "primary_keyword": "경락잔금대출",
+            "secondary_keyword": "입찰가 산정",
+            "comparison_keyword": "명도비",
+            "audience": "경매 초보",
+            "search_intent": "입찰준비",
+            "scenario": "잔금 대출을 알아볼 때",
+        }
+        variant = {"title": "경락잔금대출 잔금 대출을 알아볼 때", "angle": "실수방지형"}
+        prompt = build_prompt_package(cluster, variant)
+        prompt_text = build_text_prompt(prompt)
+        self.assertIn("데이터 전달 필수 조건", prompt_text)
+        self.assertIn("사건번호·소재지·면적·감정가·최저가·입찰보증금", prompt_text)
+        self.assertIn("입찰가 산정은 실거래가·전세가·낙찰가율", prompt_text)
+        self.assertIn("매각물건명세서", prompt_text)
+
+    def test_score_article_quality_penalizes_missing_domain_data_axes(self) -> None:
+        weak_tax_article = "# 공시가격 세금 정리\n\n공시가격은 세금에서 중요합니다. 홈택스에서 확인합니다."
+        score, meta = score_article_quality(weak_tax_article)
+        self.assertLess(score, 10.0)
+        self.assertIn("조건 변수", meta["data_delivery_missing"])
 
     def test_build_text_prompt_uses_neutral_action_guide_phrase(self) -> None:
         cluster = {

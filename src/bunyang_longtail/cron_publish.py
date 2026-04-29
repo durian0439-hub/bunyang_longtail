@@ -179,7 +179,9 @@ def _recent_diversity_blocks(conn: Any, *, domain: str, guard_count: int = 5) ->
         SELECT
             tc.family,
             tc.primary_keyword,
+            tc.secondary_keyword,
             tc.search_intent,
+            tc.scenario,
             tv.angle
         FROM publish_history ph
         JOIN topic_variant tv ON tv.id = ph.variant_id
@@ -191,14 +193,25 @@ def _recent_diversity_blocks(conn: Any, *, domain: str, guard_count: int = 5) ->
         """,
         (domain, guard_count),
     )
-    blocks = {"families": set(), "primary_keywords": set(), "intents": set(), "angles": set()}
+    blocks = {
+        "families": set(),
+        "primary_keywords": set(),
+        "secondary_keywords": set(),
+        "intents": set(),
+        "scenarios": set(),
+        "angles": set(),
+    }
     for row in rows:
         if row["family"]:
             blocks["families"].add(str(row["family"]))
         if row["primary_keyword"]:
             blocks["primary_keywords"].add(str(row["primary_keyword"]))
+        if row["secondary_keyword"]:
+            blocks["secondary_keywords"].add(str(row["secondary_keyword"]))
         if row["search_intent"]:
             blocks["intents"].add(str(row["search_intent"]))
+        if row["scenario"]:
+            blocks["scenarios"].add(str(row["scenario"]))
         if row["angle"]:
             blocks["angles"].add(str(row["angle"]))
     return blocks
@@ -209,7 +222,9 @@ def _diversity_filtered_rows(rows: list[dict[str, Any]], blocks: Mapping[str, se
         return []
     if domain == "auction":
         stages = (
-            ("family", "primary_keyword", "search_intent"),
+            ("family", "secondary_keyword", "search_intent", "scenario"),
+            ("secondary_keyword", "search_intent", "scenario"),
+            ("secondary_keyword", "scenario"),
             ("family", "primary_keyword"),
             ("primary_keyword",),
         )
@@ -218,7 +233,9 @@ def _diversity_filtered_rows(rows: list[dict[str, Any]], blocks: Mapping[str, se
     block_key = {
         "family": "families",
         "primary_keyword": "primary_keywords",
+        "secondary_keyword": "secondary_keywords",
         "search_intent": "intents",
+        "scenario": "scenarios",
         "angle": "angles",
     }
     for stage in stages:
@@ -259,7 +276,9 @@ def select_publish_candidate(
             tc.semantic_key,
             tc.family,
             tc.primary_keyword,
+            tc.secondary_keyword,
             tc.search_intent,
+            tc.scenario,
             ab.id AS bundle_id,
             1 AS recovery_priority
         FROM article_bundle ab
@@ -297,7 +316,9 @@ def select_publish_candidate(
             tc.semantic_key,
             tc.family,
             tc.primary_keyword,
-            tc.search_intent
+            tc.secondary_keyword,
+            tc.search_intent,
+            tc.scenario
         FROM topic_variant tv
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
         WHERE tc.domain = ?
