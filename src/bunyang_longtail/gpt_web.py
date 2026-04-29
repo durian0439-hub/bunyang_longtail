@@ -151,71 +151,11 @@ RATE_LIMIT_TEXT_PATTERNS = [
     "한도에 도달",
     "잠시 후 다시",
 ]
-DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS = 7200
-DEFAULT_GLOBAL_COOLDOWN_PATH = "/tmp/gpt_web_image_rate_limit_cooldown.json"
 
 
 def _looks_like_rate_limit_text(text: str) -> bool:
     lowered = (text or "").lower()
     return any(pattern in lowered for pattern in RATE_LIMIT_TEXT_PATTERNS)
-
-
-def _rate_limit_cooldown_seconds() -> int:
-    return _read_int_env(
-        "GPT_WEB_RATE_LIMIT_COOLDOWN_SEC",
-        DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS,
-        minimum=600,
-        maximum=86400,
-    )
-
-
-def _global_cooldown_path() -> Path:
-    return Path(os.getenv("GPT_WEB_GLOBAL_COOLDOWN_PATH") or DEFAULT_GLOBAL_COOLDOWN_PATH)
-
-
-def _read_global_rate_limit_cooldown(*, now: float | None = None) -> dict[str, Any] | None:
-    path = _global_cooldown_path()
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        path.unlink(missing_ok=True)
-        return None
-    until_epoch = float(payload.get("until_epoch") or 0)
-    current = time.time() if now is None else now
-    if until_epoch <= current:
-        path.unlink(missing_ok=True)
-        return None
-    return payload
-
-
-def _raise_if_global_rate_limit_cooldown_active(artifact_dir: Path) -> None:
-    cooldown = _read_global_rate_limit_cooldown()
-    if not cooldown:
-        return
-    remaining = max(1, int(float(cooldown.get("until_epoch") or 0) - time.time()))
-    raise GptWebExecutionError(
-        f"ChatGPT 웹 이미지 생성 전역 쿨다운 중입니다. 약 {remaining}초 뒤 재시도해야 합니다.",
-        code="GPT_WEB_GLOBAL_COOLDOWN",
-        artifact_dir=str(artifact_dir),
-    )
-
-
-def _mark_global_rate_limit_cooldown(artifact_dir: Path, text: str) -> None:
-    seconds = _rate_limit_cooldown_seconds()
-    now = time.time()
-    payload = {
-        "status": "rate_limited",
-        "created_epoch": now,
-        "until_epoch": now + seconds,
-        "cooldown_seconds": seconds,
-        "artifact_dir": str(artifact_dir),
-        "message_preview": (text or "")[:500],
-    }
-    path = _global_cooldown_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _raise_if_rate_limited(page: Any, artifact_dir: Path, text: str = "") -> None:
@@ -229,9 +169,8 @@ def _raise_if_rate_limited(page: Any, artifact_dir: Path, text: str = "") -> Non
     if not _looks_like_rate_limit_text(candidate):
         return
     _take_artifacts(page, artifact_dir, "rate_limit")
-    _mark_global_rate_limit_cooldown(artifact_dir, candidate)
     raise GptWebExecutionError(
-        "ChatGPT 웹 이미지 생성이 rate limit/too many requests 상태입니다. 쿨다운 후 재시도해야 합니다.",
+        "ChatGPT 웹 이미지 생성이 rate limit/too many requests 상태입니다.",
         code="GPT_WEB_RATE_LIMIT",
         artifact_dir=str(artifact_dir),
     )
@@ -1559,7 +1498,6 @@ def execute_image_job(
 ) -> dict[str, Any]:
     ensure_data_dir()
     artifact_dir = _artifact_dir("image", job_id, artifact_root)
-    _raise_if_global_rate_limit_cooldown_active(artifact_dir)
     source_profile_dir = _profile_dir(profile_name, profile_root)
     profile_dir = _clone_profile_for_isolated_run(source_profile_dir, job_id=job_id, artifact_dir=artifact_dir) if not cdp_url else source_profile_dir
     playwright = None
