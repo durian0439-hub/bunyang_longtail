@@ -1752,6 +1752,49 @@ DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
         self.assertEqual(exc_info.exception.code, "GPT_WEB_IMAGE_TIMEOUT")
         self.assertFalse(output_path.exists())
 
+    def test_wait_for_image_response_detects_rate_limit_text(self) -> None:
+        output_path = Path(self.tmpdir.name) / "rate_limited.png"
+        artifact_dir = Path(self.tmpdir.name) / "artifacts_rate"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        class DummyTextLocator:
+            def inner_text(self, *_args, **_kwargs) -> str:
+                return "Too many requests. Please try again later."
+
+        class DummyPage:
+            def wait_for_timeout(self, _ms: int) -> None:
+                return None
+
+            def locator(self, _selector: str):
+                return DummyTextLocator()
+
+            def evaluate(self, *_args, **_kwargs):
+                return None
+
+        with patch("bunyang_longtail.gpt_web._last_locator", return_value=DummyTextLocator()), patch(
+            "bunyang_longtail.gpt_web._count_locators", return_value=2
+        ), patch(
+            "bunyang_longtail.gpt_web._collect_generated_image_sources",
+            return_value=[],
+        ), patch(
+            "bunyang_longtail.gpt_web._new_generated_image_locator",
+            return_value=None,
+        ), patch("bunyang_longtail.gpt_web._has_stop_button", return_value=False), patch(
+            "bunyang_longtail.gpt_web._take_artifacts"
+        ):
+            with self.assertRaises(GptWebExecutionError) as exc_info:
+                _wait_for_image_response(
+                    DummyPage(),
+                    artifact_dir=artifact_dir,
+                    output_path=output_path,
+                    timeout_seconds=30,
+                    before_count=1,
+                    before_text="",
+                    before_image_sources=[],
+                )
+        self.assertEqual(exc_info.exception.code, "GPT_WEB_RATE_LIMIT")
+        self.assertFalse(output_path.exists())
+
     def test_summary_source_uses_article_body_when_excerpt_is_placeholder(self) -> None:
         article_markdown = "# 제목\n\n상단 요약\n\n30대 맞벌이도 일반공급 1순위는 충분히 가능할 수 있습니다.\n\nFAQ"
         summary = _summary_source("제목", "상단 요약", article_markdown)

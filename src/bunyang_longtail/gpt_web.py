@@ -137,6 +137,45 @@ class GptWebExecutionError(RuntimeError):
         self.artifact_dir = artifact_dir
 
 
+RATE_LIMIT_TEXT_PATTERNS = [
+    "too many requests",
+    "rate limit",
+    "limit reached",
+    "try again later",
+    "please try again later",
+    "you've reached",
+    "you have reached",
+    "요청이 너무 많",
+    "요청 한도",
+    "사용량 한도",
+    "한도에 도달",
+    "잠시 후 다시",
+]
+
+
+def _looks_like_rate_limit_text(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(pattern in lowered for pattern in RATE_LIMIT_TEXT_PATTERNS)
+
+
+def _raise_if_rate_limited(page: Any, artifact_dir: Path, text: str = "") -> None:
+    candidate = text or ""
+    if not _looks_like_rate_limit_text(candidate):
+        try:
+            body = page.locator("body")
+            candidate = body.inner_text(timeout=1000)
+        except Exception:
+            candidate = ""
+    if not _looks_like_rate_limit_text(candidate):
+        return
+    _take_artifacts(page, artifact_dir, "rate_limit")
+    raise GptWebExecutionError(
+        "ChatGPT 웹 이미지 생성이 rate limit/too many requests 상태입니다. 쿨다운 후 재시도해야 합니다.",
+        code="GPT_WEB_RATE_LIMIT",
+        artifact_dir=str(artifact_dir),
+    )
+
+
 
 def _classify_launch_failure_message(message: str) -> tuple[str, str] | None:
     lowered = message.lower()
@@ -1261,6 +1300,9 @@ def _wait_for_image_response(
                 reply_text = locator.inner_text(timeout=2000).strip()
             except Exception:
                 reply_text = ""
+            _raise_if_rate_limited(page, artifact_dir, reply_text)
+        else:
+            _raise_if_rate_limited(page, artifact_dir)
         current_image_sources = _collect_generated_image_sources(page)
         has_new_image = _has_new_generated_image(seen_before, current_image_sources)
         image_locator = _new_generated_image_locator(page, seen_before) if has_new_image else None
@@ -1281,6 +1323,7 @@ def _wait_for_image_response(
         page.wait_for_timeout(2000)
 
     current_image_sources = _collect_generated_image_sources(page)
+    _raise_if_rate_limited(page, artifact_dir)
     has_new_image = _has_new_generated_image(seen_before, current_image_sources)
     image_locator = _new_generated_image_locator(page, seen_before) if has_new_image else None
     if image_locator is not None and not _has_stop_button(page):
