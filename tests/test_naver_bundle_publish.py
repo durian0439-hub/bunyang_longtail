@@ -812,6 +812,65 @@ A. 서류와 현장을 다시 확인해야 합니다.
             self.assertIn("30대 맞벌이 청약은 막연히 불리한 게임이 아니라, 어떤 공급에서 판단하느냐에 따라 결과가 크게 갈립니다.", bundle.markdown)
             self.assertIn("## 청약 1순위 FAQ", bundle.markdown)
 
+    def test_auction_publish_bundle_keeps_auction_slots_for_dsr_title(self) -> None:
+        auction_article = """# DSR 수리비가 걱정될 때, 소액 투자자가 실제 비용을 계산하는 순서
+
+DSR과 경락잔금대출 한도를 맞추지 못한 채 입찰하면 잔금 미납으로 손해가 커질 수 있습니다.
+
+## 상단 요약
+
+법원경매정보에서 사건번호와 입찰보증금을 먼저 확인합니다.
+매각물건명세서와 등기부등본으로 권리 인수 여부를 봅니다.
+현황조사서와 전입세대열람으로 점유와 대항력 가능성을 확인합니다.
+
+## 이 글에서 바로 답하는 질문
+
+경락잔금대출은 DSR, 소득, 기존 대출, 담보가치에 따라 달라집니다.
+
+## 핵심 조건 정리
+
+감정가, 최저가, 입찰보증금, 실거래가, 낙찰가율, 수리비, 명도비, 취득세를 함께 계산합니다.
+
+## 헷갈리기 쉬운 예외
+
+임차인 배당요구와 보증금 인수 가능성이 있으면 낙찰가 외 부담이 생깁니다.
+
+## 실전 예시 시나리오
+
+소액 투자자가 소재지와 면적을 확인한 뒤 경락잔금대출 부족분을 따져 보류하는 사례입니다.
+
+## 체크리스트
+
+- 법원경매정보 사건번호를 확인합니다.
+- 매각물건명세서에서 임차인과 배당을 봅니다.
+- 현황조사서로 점유 상태를 봅니다.
+
+## FAQ
+
+### DSR이 높으면 입찰이 어렵나요?
+
+대출 상담에서 한도와 잔금일 실행 가능 여부를 먼저 확인합니다.
+
+## 마무리 결론
+
+법원 서류, 현장, 대출 상담이 맞는 물건만 입찰 후보로 남깁니다.
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle = build_publish_bundle(
+                bundle_id=67,
+                variant_title="DSR 수리비가 걱정될 때, 실제 비용 계산 순서",
+                article_markdown=auction_article,
+                output_root=tmpdir,
+                image_provider="local",
+                domain="auction",
+            )
+            meta = json.loads(Path(bundle.meta_path).read_text(encoding="utf-8"))
+
+        self.assertEqual(meta["domain"], "auction")
+        self.assertEqual(bundle.markdown.count("[[IMAGE:"), len(bundle.images))
+        self.assertIn("경매 핵심 판단 기준", {asset["slot"] for asset in meta["assets"]})
+        self.assertNotIn("부동산 대출 핵심 기준", {asset["slot"] for asset in meta["assets"]})
+
     def test_build_publish_markdown_does_not_truncate_intro_with_ellipsis(self) -> None:
         article = """가점제 규제지역 청약 전 1주택 갈아타기 준비자가 놓치면 탈락하는 포인트
 상단 요약
@@ -986,6 +1045,144 @@ Q1. 바로 신청해도 되나요?
         second_cmd = run_mock.call_args_list[1].args[0]
         self.assertNotEqual(first_cmd[first_cmd.index("--job-id") + 1], second_cmd[second_cmd.index("--job-id") + 1])
         sleep_mock.assert_not_called()
+
+    def test_render_gpt_publish_assets_retries_rate_limit(self) -> None:
+        output_path = Path(tempfile.gettempdir()) / "rate_limit_publish_asset.png"
+        output_path.write_bytes(b"not-empty")
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            target,
+            "_build_gpt_publish_image_plans",
+            return_value=[
+                target.PublishImagePlan(
+                    slot="__after_title__",
+                    kind="thumbnail",
+                    label="대표 이미지",
+                    image_role="thumbnail",
+                    prompt_text="테스트 이미지",
+                )
+            ],
+        ), patch.object(target, "_is_visually_blank_publish_image", return_value=False), patch.object(target.time, "sleep") as sleep_mock, patch.object(
+            target.subprocess,
+            "run",
+            side_effect=[
+                SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr=json.dumps({"error": "too many requests", "code": "GPT_WEB_RATE_LIMIT"}, ensure_ascii=False),
+                ),
+                SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"file_path": str(output_path)}, ensure_ascii=False),
+                    stderr="",
+                ),
+            ],
+        ) as run_mock, patch.dict(
+            os.environ,
+            {
+                "NAVER_BLOG_GPT_IMAGE_ATTEMPTS": "2",
+                "NAVER_BLOG_GPT_IMAGE_RETRY_BACKOFF_SEC": "0",
+                "NAVER_BLOG_GPT_IMAGE_COOLDOWN_SEC": "0",
+            },
+        ):
+            assets = target._render_gpt_publish_assets(
+                title="테스트 제목",
+                sections=[],
+                output_dir=tmpdir,
+                provider="gpt_web",
+            )
+
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(run_mock.call_count, 2)
+        sleep_mock.assert_not_called()
+
+    def test_render_gpt_publish_assets_retries_submit_failed(self) -> None:
+        output_path = Path(tempfile.gettempdir()) / "submit_failed_publish_asset.png"
+        output_path.write_bytes(b"not-empty")
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            target,
+            "_build_gpt_publish_image_plans",
+            return_value=[
+                target.PublishImagePlan(
+                    slot="__after_title__",
+                    kind="thumbnail",
+                    label="대표 이미지",
+                    image_role="thumbnail",
+                    prompt_text="테스트 이미지",
+                )
+            ],
+        ), patch.object(target, "_is_visually_blank_publish_image", return_value=False), patch.object(target.time, "sleep"), patch.object(
+            target.subprocess,
+            "run",
+            side_effect=[
+                SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr=json.dumps({"error": "submit failed", "code": "GPT_WEB_SUBMIT_FAILED"}, ensure_ascii=False),
+                ),
+                SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"file_path": str(output_path)}, ensure_ascii=False),
+                    stderr="",
+                ),
+            ],
+        ) as run_mock, patch.dict(
+            os.environ,
+            {
+                "NAVER_BLOG_GPT_IMAGE_ATTEMPTS": "2",
+                "NAVER_BLOG_GPT_IMAGE_RETRY_BACKOFF_SEC": "0",
+                "NAVER_BLOG_GPT_IMAGE_COOLDOWN_SEC": "0",
+            },
+        ):
+            assets = target._render_gpt_publish_assets(
+                title="테스트 제목",
+                sections=[],
+                output_dir=tmpdir,
+                provider="gpt_web",
+            )
+
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(run_mock.call_count, 2)
+
+    def test_render_gpt_publish_assets_wraps_xvfb_when_display_missing(self) -> None:
+        output_path = Path(tempfile.gettempdir()) / "xvfb_publish_asset.png"
+        output_path.write_bytes(b"not-empty")
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            target,
+            "_build_gpt_publish_image_plans",
+            return_value=[
+                target.PublishImagePlan(
+                    slot="__after_title__",
+                    kind="thumbnail",
+                    label="대표 이미지",
+                    image_role="thumbnail",
+                    prompt_text="테스트 이미지",
+                )
+            ],
+        ), patch.object(target, "_is_visually_blank_publish_image", return_value=False), patch.object(
+            target.shutil,
+            "which",
+            return_value="/usr/bin/xvfb-run",
+        ), patch.object(
+            target.subprocess,
+            "run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"file_path": str(output_path)}, ensure_ascii=False),
+                stderr="",
+            ),
+        ) as run_mock, patch.dict(os.environ, {"NAVER_BLOG_GPT_IMAGE_ATTEMPTS": "1"}, clear=False):
+            with patch.dict(os.environ, {"DISPLAY": ""}, clear=False):
+                assets = target._render_gpt_publish_assets(
+                    title="테스트 제목",
+                    sections=[],
+                    output_dir=tmpdir,
+                    provider="gpt_web",
+                )
+
+        self.assertEqual(len(assets), 1)
+        cmd = run_mock.call_args.args[0]
+        self.assertEqual(cmd[:2], ["/usr/bin/xvfb-run", "-a"])
+        self.assertIn("scripts/generate_publish_image.py", " ".join(cmd))
 
     def test_render_gpt_publish_assets_stops_on_challenge_without_wasting_retries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(

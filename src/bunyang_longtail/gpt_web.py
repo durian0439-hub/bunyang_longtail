@@ -683,6 +683,8 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             content_format_lines.append("- 피해야 할 형식: " + ", ".join(str(item) for item in avoid_items))
     writing_rules = user_prompt.get("writing_rules", [])
     rule_lines = [f"- {item}" for item in writing_rules]
+    data_delivery_requirements = user_prompt.get("data_delivery_requirements", [])
+    data_delivery_lines = [f"- {item}" for item in data_delivery_requirements]
     required_sections = user_prompt.get("required_sections", [])
     required_lines = [f"- {item}" for item in required_sections]
     domain = str(user_prompt.get("domain") or "cheongyak")
@@ -690,6 +692,16 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
         mutable_policy_lines = [
             "경매 기준과 권리관계는 사건별로 달라질 수 있으니 실시간 조회를 했다고 가정하지 말고, 일반적인 확인 순서와 리스크 판단 중심으로 완성본을 작성하세요.",
             "최신 매각조건, 점유관계, 대출 가능 여부, 세금·비용은 단정하지 말고 법원경매정보와 관련 서류 확인 필요성을 자연스럽게 안내하세요.",
+        ]
+    elif domain == "tax":
+        mutable_policy_lines = [
+            "세법과 감면 기준은 연도와 개인 조건에 따라 달라질 수 있으니 실시간 조회를 했다고 가정하지 말고, 기준일·신고처·확인 순서 중심으로 완성본을 작성하세요.",
+            "세율·비과세·중과 여부는 단정하지 말고 홈택스, 위택스, 국세청, 지자체 안내에서 최종 확인해야 함을 자연스럽게 안내하세요.",
+        ]
+    elif domain == "loan":
+        mutable_policy_lines = [
+            "대출 한도와 금리는 소득, 신용, 기존 대출, 담보가치, 금융기관 심사에 따라 달라질 수 있으니 실시간 승인처럼 단정하지 마세요.",
+            "DSR·LTV·DTI, 실행일, 준비서류, 은행 상담 확인 순서를 중심으로 완성본을 작성하세요.",
         ]
     else:
         mutable_policy_lines = [
@@ -721,6 +733,9 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             "",
             "권장 아웃라인:",
             *outline_lines,
+            "",
+            "데이터 전달 필수 조건:",
+            *data_delivery_lines,
             "",
             "작성 규칙:",
             *rule_lines,

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import signal
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -125,6 +126,8 @@ TRANSIENT_GPT_WEB_IMAGE_ERROR_CODES = {
     "GPT_WEB_TIMEOUT",
     "GPT_WEB_NAVIGATION_TIMEOUT",
     "GPT_WEB_IMAGE_TIMEOUT",
+    "GPT_WEB_RATE_LIMIT",
+    "GPT_WEB_SUBMIT_FAILED",
 }
 NON_RETRYABLE_GPT_WEB_IMAGE_ERROR_CODES = {
     "GPT_WEB_CHALLENGE",
@@ -354,13 +357,14 @@ def _content_domain(title: str, explicit_domain: str | None = None) -> str:
     return "cheongyak"
 
 
-def _topic_kind(title: str) -> str:
+def _topic_kind(title: str, explicit_domain: str | None = None) -> str:
     text = _clean(_strip_heading_markers(title))
-    if _content_domain(text) == "auction":
+    content_domain = _content_domain(text, explicit_domain)
+    if content_domain == "auction":
         return "auction"
-    if _content_domain(text) == "tax":
+    if content_domain == "tax":
         return "tax"
-    if _content_domain(text) == "loan":
+    if content_domain == "loan":
         return "loan"
     if "1순위 조건" in text and "맞벌이" in text:
         return "ranking"
@@ -371,14 +375,14 @@ def _topic_kind(title: str) -> str:
     return "generic"
 
 
-def _publish_heading_map(title: str) -> dict[str, str]:
+def _publish_heading_map(title: str, explicit_domain: str | None = None) -> dict[str, str]:
     mapping = dict(BASE_PUBLISH_HEADING_MAP)
-    mapping.update(TOPIC_PUBLISH_HEADING_OVERRIDES.get(_topic_kind(title), {}))
+    mapping.update(TOPIC_PUBLISH_HEADING_OVERRIDES.get(_topic_kind(title, explicit_domain), {}))
     return mapping
 
 
-def _publish_heading_for(title: str, raw_heading: str) -> str:
-    return _publish_heading_map(title).get(raw_heading, raw_heading)
+def _publish_heading_for(title: str, raw_heading: str, explicit_domain: str | None = None) -> str:
+    return _publish_heading_map(title, explicit_domain).get(raw_heading, raw_heading)
 
 
 def _normalize_section_lines(lines: list[str]) -> list[str]:
@@ -846,10 +850,10 @@ def _prepare_article_for_publish(*, title: str, article_markdown: str, domain: s
     return _synthesize_article_for_publish(title, domain=domain)
 
 
-def parse_publish_sections(article_markdown: str, *, title_hint: str | None = None) -> tuple[str, list[PublishSection]]:
+def parse_publish_sections(article_markdown: str, *, title_hint: str | None = None, domain: str | None = None) -> tuple[str, list[PublishSection]]:
     original_title, sections = _split_article(article_markdown)
     base_title = title_hint or original_title
-    heading_map = _publish_heading_map(base_title)
+    heading_map = _publish_heading_map(base_title, domain)
     ordered: list[PublishSection] = []
     for heading in RAW_SECTION_ORDER:
         lines = sections.get(heading) or []
@@ -965,12 +969,12 @@ def _thumbnail_title_lines(draw: ImageDraw.ImageDraw, title: str) -> list[str]:
     return _fit_lines(draw, normalized, max_width=560, font_size=62, max_lines=3)
 
 
-def _topic_palette(title: str) -> dict[str, str]:
-    return TOPIC_COLORS.get(_topic_kind(title), TOPIC_COLORS["generic"])
+def _topic_palette(title: str, domain: str | None = None) -> dict[str, str]:
+    return TOPIC_COLORS.get(_topic_kind(title, domain), TOPIC_COLORS["generic"])
 
 
-def _thumbnail_chips(title: str, sections: list[PublishSection]) -> list[str]:
-    chips = list(THUMBNAIL_CHIPS.get(_topic_kind(title), THUMBNAIL_CHIPS["generic"]))
+def _thumbnail_chips(title: str, sections: list[PublishSection], domain: str | None = None) -> list[str]:
+    chips = list(THUMBNAIL_CHIPS.get(_topic_kind(title, domain), THUMBNAIL_CHIPS["generic"]))
     if len(chips) >= 3:
         return chips[:3]
     for section in sections:
@@ -1016,8 +1020,8 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
     output.parent.mkdir(parents=True, exist_ok=True)
 
     content_domain = _content_domain(title, domain)
-    kind = _topic_kind(title)
-    palette = _topic_palette(title)
+    kind = _topic_kind(title, content_domain)
+    palette = _topic_palette(title, content_domain)
     accent = palette["accent"]
     soft = palette["soft"]
     width = height = 1080
@@ -1048,6 +1052,8 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
         "institution": "특별공급",
         "cashflow": "분양 자금",
         "auction": "경매 입찰",
+        "tax": "부동산 세금",
+        "loan": "부동산 대출",
     }.get(kind, "경매" if content_domain == "auction" else "분양청약")
     draw.rounded_rectangle((88, 88, 286, 142), radius=22, fill="#0F172A")
     draw.text((187, 115), badge_text, fill="white", font=_font(30), anchor="mm")
@@ -1067,7 +1073,7 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
 
     _draw_thumbnail_icon(draw, kind=kind, accent=accent)
 
-    chips = _thumbnail_chips(title, sections)[:2]
+    chips = _thumbnail_chips(title, sections, domain=content_domain)[:2]
     chip_y = 736
     for idx, chip in enumerate(chips):
         x1 = 92 + idx * 214
@@ -1081,6 +1087,10 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
     footer_text = (
         "최종 확인은 법원경매정보와 사건 서류·현장 점검으로 확인"
         if content_domain == "auction"
+        else "최종 확인은 홈택스·위택스와 신고기한 기준으로 확인"
+        if content_domain == "tax"
+        else "최종 확인은 은행 상담과 DSR·LTV 심사 기준으로 확인"
+        if content_domain == "loan"
         else "표 중심 본문, 최종 자격과 일정은 공고문과 청약홈으로 확인"
     )
     draw.text((540, 883), footer_text, fill="#334155", font=_font(27), anchor="mm")
@@ -1377,10 +1387,10 @@ def _simple_rows_from_lines(lines: list[str], *, limit: int = 4) -> list[str]:
     return rows
 
 
-def _table_specs(title: str, sections: list[PublishSection]) -> list[dict[str, Any]]:
-    kind = _topic_kind(title)
-    key_slot = _publish_heading_for(title, "핵심 조건 정리")
-    checklist_slot = _publish_heading_for(title, "체크리스트")
+def _table_specs(title: str, sections: list[PublishSection], domain: str | None = None) -> list[dict[str, Any]]:
+    kind = _topic_kind(title, domain)
+    key_slot = _publish_heading_for(title, "핵심 조건 정리", domain)
+    checklist_slot = _publish_heading_for(title, "체크리스트", domain)
     checklist_section = _section_by_raw_heading(sections, "체크리스트")
 
     if kind == "ranking":
@@ -1442,7 +1452,7 @@ def _table_specs(title: str, sections: list[PublishSection]) -> list[dict[str, A
 
     if kind == "cashflow":
         checklist_rows = _simple_rows_from_lines(checklist_section.lines if checklist_section else [], limit=4)
-        scenario_slot = _publish_heading_for(title, "실전 예시 시나리오")
+        scenario_slot = _publish_heading_for(title, "실전 예시 시나리오", domain)
         return [
             {
                 "slot": key_slot,
@@ -1594,8 +1604,8 @@ def _publish_image_excerpt(title: str, sections: list[PublishSection]) -> str:
     return _trim_text(title, max_len=140)
 
 
-def _topic_visual_style(title: str) -> str:
-    kind = _topic_kind(title)
+def _topic_visual_style(title: str, domain: str | None = None) -> str:
+    kind = _topic_kind(title, domain)
     if kind == "ranking":
         return "한국 30대 맞벌이 부부와 청약 자격 검토 장면, 신뢰감 있는 파란색 계열, 블로그 본문 삽화 톤"
     if kind == "institution":
@@ -1607,8 +1617,8 @@ def _topic_visual_style(title: str) -> str:
     return "한국 부동산 정보 블로그에 맞는 깔끔한 인포그래픽 톤"
 
 
-def _thumbnail_prompt_text(title: str, sections: list[PublishSection]) -> str:
-    chips = ", ".join(THUMBNAIL_CHIPS.get(_topic_kind(title), THUMBNAIL_CHIPS["generic"])[:2])
+def _thumbnail_prompt_text(title: str, sections: list[PublishSection], domain: str | None = None) -> str:
+    chips = ", ".join(THUMBNAIL_CHIPS.get(_topic_kind(title, domain), THUMBNAIL_CHIPS["generic"])[:2])
     summary = _publish_image_excerpt(title, sections)
     return (
         "Use the uploaded image as a visual reference for mood and composition. "
@@ -1780,6 +1790,7 @@ def _build_gpt_publish_image_plans(
     title: str,
     sections: list[PublishSection],
     inline_table_specs: list[dict[str, Any]] | None = None,
+    domain: str | None = None,
 ) -> list[PublishImagePlan]:
     plans: list[PublishImagePlan] = [
         PublishImagePlan(
@@ -1787,7 +1798,7 @@ def _build_gpt_publish_image_plans(
             kind="thumbnail",
             label="썸네일",
             image_role="thumbnail",
-            prompt_text=_thumbnail_prompt_text(title, sections),
+            prompt_text=_thumbnail_prompt_text(title, sections, domain=domain),
         )
     ]
     for section in sections:
@@ -1801,11 +1812,11 @@ def _build_gpt_publish_image_plans(
             )
         )
 
-    for spec in _table_specs(title, sections):
+    for spec in _table_specs(title, sections, domain=domain):
         label = _clean(spec.get("label")) or "보조 설명 이미지"
         plans.append(
             PublishImagePlan(
-                slot=f"{_clean(spec.get('slot')) or _publish_heading_for(title, '핵심 조건 정리')}::before",
+                slot=f"{_clean(spec.get('slot')) or _publish_heading_for(title, '핵심 조건 정리', domain)}::before",
                 kind="focus" if "체크리스트" not in label else "mini_checklist",
                 label=f"{label} 보조 이미지",
                 image_role="section_visual",
@@ -1834,12 +1845,13 @@ def _render_gpt_publish_assets(
     output_dir: str | Path,
     provider: str,
     inline_table_specs: list[dict[str, Any]] | None = None,
+    domain: str | None = None,
 ) -> list[PublishAsset]:
     resolved_provider = _resolve_publish_image_provider(provider)
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
     excerpt = _publish_image_excerpt(title, sections)
-    plans = _build_gpt_publish_image_plans(title, sections, inline_table_specs=inline_table_specs)
+    plans = _build_gpt_publish_image_plans(title, sections, inline_table_specs=inline_table_specs, domain=domain)
     max_assets_raw = str(os.getenv("NAVER_BLOG_GPT_IMAGE_MAX_ASSETS", "0")).strip()
     max_assets = int(max_assets_raw) if max_assets_raw.isdigit() else 0
     if max_assets > 0:
@@ -1906,6 +1918,10 @@ def _render_gpt_publish_assets(
                 "--wait-for-ready-seconds", str(ready_seconds),
                 "--response-timeout-seconds", str(response_seconds),
             ]
+            if not os.getenv("DISPLAY"):
+                xvfb_run = shutil.which("xvfb-run")
+                if xvfb_run:
+                    cmd = [xvfb_run, "-a", *cmd]
             try:
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
             except subprocess.TimeoutExpired:
@@ -2003,7 +2019,7 @@ def _render_publish_assets_local(
     thumbnail_path = render_thumbnail_image(title=title, sections=sections, output_path=output_root / "00_thumbnail.png", domain=domain)
     assets.append(PublishAsset(slot="lead", kind="thumbnail", label="썸네일", path=str(Path(thumbnail_path).resolve())))
 
-    topic = _topic_kind(title)
+    topic = _topic_kind(title, domain)
     if topic == "ranking":
         checklist_section = _section_by_raw_heading(sections, "체크리스트")
         checklist_items = _simple_rows_from_lines(checklist_section.lines if checklist_section else [], limit=5) or [
@@ -2012,8 +2028,8 @@ def _render_publish_assets_local(
             "세대 기준 무주택과 재당첨 제한 점검하기",
             "입주자모집공고와 청약홈으로 최종 확인하기",
         ]
-        key_slot = _publish_heading_for(title, "핵심 조건 정리")
-        checklist_slot = _publish_heading_for(title, "체크리스트")
+        key_slot = _publish_heading_for(title, "핵심 조건 정리", domain)
+        checklist_slot = _publish_heading_for(title, "체크리스트", domain)
 
         intro_path = render_soft_illustration_image(
             title=title,
@@ -2053,9 +2069,9 @@ def _render_publish_assets_local(
             "옵션비와 취득세를 따로 계산표에 넣기",
             "잔금대출 한도와 기존 보증금 회수 일정 점검하기",
         ]
-        key_slot = _publish_heading_for(title, "핵심 조건 정리")
-        scenario_slot = _publish_heading_for(title, "실전 예시 시나리오")
-        checklist_slot = _publish_heading_for(title, "체크리스트")
+        key_slot = _publish_heading_for(title, "핵심 조건 정리", domain)
+        scenario_slot = _publish_heading_for(title, "실전 예시 시나리오", domain)
+        checklist_slot = _publish_heading_for(title, "체크리스트", domain)
 
         intro_path = render_soft_illustration_image(
             title=title,
@@ -2095,7 +2111,7 @@ def _render_publish_assets_local(
         assets.extend(_render_inline_table_assets_local(title=title, inline_table_specs=inline_table_specs or [], output_dir=output_root))
         return assets
 
-    for spec in _table_specs(title, sections):
+    for spec in _table_specs(title, sections, domain=domain):
         table_path = render_table_image(
             title=title,
             label=str(spec["label"]),
@@ -2146,6 +2162,7 @@ def _render_publish_assets_result(
         output_dir=output_dir,
         provider=resolved_provider,
         inline_table_specs=inline_table_specs,
+        domain=domain,
     )
     return PublishAssetRenderResult(
         assets=assets,
@@ -2355,7 +2372,7 @@ def _auction_lead_line(title: str) -> str:
 
 def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | None = None) -> list[str]:
     content_domain = _content_domain(title, domain)
-    topic = _topic_kind(title)
+    topic = _topic_kind(title, content_domain)
     if content_domain == "auction":
         return [
             _auction_lead_line(title),
@@ -2671,7 +2688,7 @@ def build_publish_bundle(
     publish_title = title_override or build_publish_title(variant_title)
     content_domain = _content_domain(publish_title or variant_title, domain)
     prepared_article = _prepare_article_for_publish(title=variant_title, article_markdown=article_markdown, domain=content_domain)
-    original_title, sections = parse_publish_sections(prepared_article, title_hint=variant_title)
+    original_title, sections = parse_publish_sections(prepared_article, title_hint=variant_title, domain=content_domain)
     publish_title = title_override or build_publish_title(variant_title or original_title)
     content_domain = _content_domain(publish_title, content_domain)
     output_dir = Path(output_root).resolve()
