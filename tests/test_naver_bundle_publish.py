@@ -667,7 +667,11 @@ A. 서류와 현장을 다시 확인해야 합니다.
                     "project": "longtail",
                     "video_path": str(Path(tmpdir) / "video" / "longtail-bundle-11.mp4"),
                     "clip_package_path": "/tmp/longtail.naver_clip.json",
-                    "naver_clip_upload": {"status": "public_saved", "visibility": "public"},
+                    "naver_clip_upload": {
+                        "status": "public_saved",
+                        "visibility": "public",
+                        "post_publish_review": {"direct_url": "https://tv.naver.com/v/12345678"},
+                    },
                 }
                 Path(payload["video_path"]).parent.mkdir(parents=True, exist_ok=True)
                 Path(payload["video_path"]).write_bytes(b"mp4")
@@ -742,6 +746,31 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertIn("public", seen_cmd)
         self.assertNotIn("longtail_video_qa_freeze", json.dumps(result, ensure_ascii=False))
         self.assertEqual(seen_publish_kwargs["videos"], [])
+
+    def test_insert_video_marker_prefers_after_thumbnail_greeting(self) -> None:
+        markdown = "# 제목\n\n[[IMAGE:1]]\n\n첫 인삿말입니다.\n\n## 상단 요약\n\n본문"
+        updated = target._insert_video_marker_after_lead_image(markdown, 1)
+        self.assertIn("[[IMAGE:1]]\n\n첫 인삿말입니다.\n\n[[VIDEO:1]]\n\n## 상단 요약", updated)
+
+    def test_extract_naver_clip_url_uses_direct_clip_url_and_rejects_profile_only(self) -> None:
+        self.assertEqual(
+            target._extract_naver_clip_url(
+                {
+                    "naver_clip_upload": {
+                        "status": "public_saved",
+                        "post_publish_review": {"direct_url": "https://tv.naver.com/v/98738070"},
+                        "share": {"profile_url": "https://clip.naver.com/@91koqb79em"},
+                    }
+                }
+            ),
+            "https://tv.naver.com/v/98738070",
+        )
+        self.assertEqual(
+            target._extract_naver_clip_url(
+                {"naver_clip_upload": {"status": "public_saved", "share": {"profile_url": "https://clip.naver.com/@91koqb79em"}}}
+            ),
+            "",
+        )
 
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

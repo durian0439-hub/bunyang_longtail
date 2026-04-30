@@ -2670,7 +2670,17 @@ def _insert_video_marker_after_lead_image(markdown: str, video_index: int = 1) -
             insert_at = index + 1
             while insert_at < len(lines) and not lines[insert_at].strip():
                 insert_at += 1
-            lines[insert_at:insert_at] = ["", marker, ""]
+            # Prefer thumbnail -> greeting/intro paragraph -> video. If the next
+            # block is already a heading/image, fall back to directly below the
+            # thumbnail so the clip stays near the top without breaking structure.
+            if insert_at < len(lines):
+                first_after_image = lines[insert_at].strip()
+                if first_after_image and not first_after_image.startswith("#") and not re.fullmatch(r"\[\[(?:IMAGE|VIDEO):\d+\]\]", first_after_image):
+                    insert_at += 1
+                    while insert_at < len(lines) and not lines[insert_at].strip():
+                        insert_at += 1
+            insert_block = [marker, ""] if insert_at > 0 and not lines[insert_at - 1].strip() else ["", marker, ""]
+            lines[insert_at:insert_at] = insert_block
             return "\n".join(lines).strip() + "\n"
     if lines and lines[0].startswith("# "):
         lines[1:1] = ["", marker, ""]
@@ -3131,22 +3141,22 @@ def _extract_naver_clip_url(video_result: dict[str, Any]) -> str:
     upload = video_result.get("naver_clip_upload") if isinstance(video_result, dict) else None
     candidates = []
     if isinstance(upload, dict):
+        post_review = upload.get("post_publish_review")
+        if isinstance(post_review, dict):
+            candidates.append(post_review.get("direct_url"))
+        candidates.append(upload.get("share_url"))
         share = upload.get("share")
         if isinstance(share, dict):
             candidates.append(share.get("share_url"))
             candidates.append(share.get("page_url"))
-            candidates.append(share.get("profile_url"))
-        candidates.append(upload.get("share_url"))
         candidates.append(upload.get("final_url"))
     if isinstance(video_result, dict):
         candidates.append(video_result.get("share_url"))
         candidates.append(video_result.get("video_url"))
     for candidate in candidates:
         url = _clean(str(candidate or ""))
-        if url.startswith("https://") and ("clip.naver.com" in url or "naver.me" in url):
+        if url.startswith("https://") and ("clip.naver.com" in url or "naver.me" in url or "tv.naver.com/v/" in url):
             return url
-    if isinstance(upload, dict) and _clean(str(upload.get("status") or "")).endswith("saved"):
-        return _clean(os.getenv("NAVER_CLIP_PROFILE_URL")) or "https://clip.naver.com/@91koqb79em"
     return ""
 
 
