@@ -2884,7 +2884,7 @@ def _longtail_blog_category(domain: str | None, fallback: str | None = None) -> 
     return "How To 분양"
 
 
-LONGTAIL_VIDEO_QA_FREEZE = True  # 2026-04-27: TTS 대본/썸네일 검수 전까지 영상 생성·업로드·본문 삽입 코드단 중단
+LONGTAIL_VIDEO_QA_FREEZE = False  # 2026-04-30: 영상/TTS/썸네일 보정 후 운영 재개
 
 
 def _render_longtail_video_for_blog(

@@ -735,12 +735,13 @@ A. 서류와 현장을 다시 확인해야 합니다.
                     category_name="How To 경매",
                 )
 
-        self.assertEqual(result["video_publish"]["status"], "skipped")
-        self.assertEqual(result["video_publish"]["reason"], "longtail_video_qa_freeze")
-        self.assertNotIn("[[VIDEO:1]]", seen_publish_kwargs["body_markdown"])
+        self.assertEqual(result["video_publish"]["status"], "ok")
+        self.assertIn("--with-tts", seen_cmd)
+        self.assertIn("--upload-naver-clip", seen_cmd)
+        self.assertIn("--naver-clip-visibility", seen_cmd)
+        self.assertIn("public", seen_cmd)
+        self.assertNotIn("longtail_video_qa_freeze", json.dumps(result, ensure_ascii=False))
         self.assertEqual(seen_publish_kwargs["videos"], [])
-        self.assertEqual(seen_publish_kwargs["clip_urls"], [])
-        self.assertEqual(seen_cmd, [])
 
     def test_is_visually_blank_publish_image_detects_white_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
