@@ -1079,8 +1079,20 @@ def _read_composer_text(page: Any) -> str:
     return ""
 
 
+def _first_present(page: Any, selectors: list[str]) -> tuple[str, Any] | None:
+    for selector in selectors:
+        try:
+            locator = page.locator(selector)
+            count = locator.count()
+        except Exception:
+            continue
+        if count > 0:
+            return selector, locator.nth(0)
+    return None
+
+
 def _force_set_composer_text(page: Any, prompt_text: str) -> None:
-    target = _first_visible(page, COMPOSER_SELECTORS)
+    target = _first_visible(page, COMPOSER_SELECTORS) or _first_present(page, COMPOSER_SELECTORS)
     if target:
         _, locator = target
         locator.evaluate(
@@ -1115,11 +1127,15 @@ def _fill_prompt(page: Any, prompt_text: str) -> None:
 
     if selector.startswith("textarea"):
         try:
-            locator.fill(prompt_text)
+            locator.fill(prompt_text, timeout=5000)
         except Exception:
-            locator.click()
-            page.keyboard.press("Control+A")
-            page.keyboard.insert_text(prompt_text)
+            try:
+                # ChatGPT의 최신 UI는 실제 입력창처럼 보이는 textarea가
+                # Playwright 관점에서는 일시적으로 hidden 처리되는 경우가 있다.
+                # 이때 force fill로 값과 input 이벤트를 넣고, 실패하면 JS 주입으로 보강한다.
+                locator.fill(prompt_text, timeout=5000, force=True)
+            except Exception:
+                _force_set_composer_text(page, prompt_text)
     else:
         page.keyboard.press("Control+A")
         page.keyboard.insert_text(prompt_text)
