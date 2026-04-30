@@ -935,6 +935,44 @@ Q1. 바로 신청해도 되나요?
         self.assertNotIn("다음 글부터 관련 글이 자동으로 연결됩니다", markdown)
         self.assertNotIn("관련 글\n-", markdown)
 
+    def test_build_publish_markdown_appends_lead_cta_form_link(self) -> None:
+        _, sections = parse_publish_sections(
+            SPARSE_CASHFLOW_ARTICLE,
+            title_hint="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "LONGTAIL_LEAD_CTA_ENABLED": "1",
+                "LONGTAIL_LEAD_CTA_FORM_URL": "https://forms.example/lead",
+            },
+        ):
+            markdown = target.build_publish_markdown(
+                title="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+                sections=sections,
+                assets=[],
+                related_links=[],
+            )
+
+        self.assertIn("## 내 상황 기준 체크리스트 받아보기", markdown)
+        self.assertIn("부동산 상황 사전점검 신청\nhttps://forms.example/lead", markdown)
+        self.assertLess(markdown.index("내 상황 기준 체크리스트"), markdown.index(target.BOOK_NOTICE_TEXT))
+
+    def test_build_publish_markdown_can_disable_lead_cta(self) -> None:
+        _, sections = parse_publish_sections(
+            SPARSE_CASHFLOW_ARTICLE,
+            title_hint="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+        )
+        with patch.dict(os.environ, {"LONGTAIL_LEAD_CTA_ENABLED": "0"}):
+            markdown = target.build_publish_markdown(
+                title="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+                sections=sections,
+                assets=[],
+                related_links=[],
+            )
+
+        self.assertNotIn("내 상황 기준 체크리스트", markdown)
+
     def test_default_tags_expands_cheongyak_auction_and_tax_to_naver_limit(self) -> None:
         cheongyak_tags = target.default_tags(
             "분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",

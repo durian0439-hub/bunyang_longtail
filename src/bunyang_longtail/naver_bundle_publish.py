@@ -2419,11 +2419,21 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
 BOOK_LINK_URL = "https://link.coupang.com/a/esfszm"
 AUCTION_BOOK_LINK_URL = "https://link.coupang.com/a/espLX0"
 BOOK_NOTICE_TEXT = '"이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."'
+DEFAULT_LEAD_CTA_FORM_URL = (
+    "https://docs.google.com/forms/d/e/"
+    "1FAIpQLSf9lXBUwdGRjDVqbtoYUChO_isJxKQpxbYXcFxNDlQNubZPiw/viewform"
+)
 RELATED_CATEGORY_LABELS = {
     "cheongyak": "How To 분양",
     "auction": "How To 경매",
     "tax": "How To 세금",
     "loan": "부동산 대출",
+}
+CTA_DOMAIN_LABELS = {
+    "cheongyak": "청약 조건과 자금 흐름",
+    "auction": "경매 권리·점유·자금",
+    "tax": "부동산 세금 기준",
+    "loan": "대출 한도·금리·상환",
 }
 
 
@@ -2433,6 +2443,32 @@ def _book_link_url_for_domain(domain: str | None = None) -> str:
 
 def _related_category_label(domain: str | None = None) -> str:
     return RELATED_CATEGORY_LABELS.get(_content_domain("", domain), "카테고리")
+
+
+def _lead_cta_form_url() -> str:
+    if not _env_flag("LONGTAIL_LEAD_CTA_ENABLED", default=True):
+        return ""
+    return _clean(os.getenv("LONGTAIL_LEAD_CTA_FORM_URL") or DEFAULT_LEAD_CTA_FORM_URL)
+
+
+def _append_lead_cta_block(lines: list[str], *, domain: str | None = None) -> None:
+    form_url = _lead_cta_form_url()
+    if not form_url:
+        return
+    content_domain = _content_domain("", domain)
+    domain_label = CTA_DOMAIN_LABELS.get(content_domain, "부동산 상황")
+    lines.append("## 내 상황 기준 체크리스트 받아보기")
+    lines.append("")
+    lines.append(
+        f"{domain_label}이 조금 복잡하게 느껴진다면 글만 보고 바로 결정하지 마시고, "
+        "현재 상황을 짧게 남겨주세요."
+    )
+    lines.append("청약·경매·대출·세금 중 어디에서 막혔는지 기준으로 먼저 확인해야 할 체크리스트를 정리해드립니다.")
+    lines.append("")
+    lines.append("부동산 상황 사전점검 신청")
+    lines.append(form_url)
+    lines.append("")
+    lines.append("※ 본 신청은 일반 정보 확인 및 체크리스트 제공 목적입니다. 세무·법률·대출 가능 여부는 실제 서류와 전문가 확인이 필요합니다.")
 
 
 def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> None:
@@ -2535,6 +2571,8 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
         lines.append("대출 한도와 금리, 승인 여부는 소득·신용·주택 수·담보가치·금융기관 심사에 따라 달라질 수 있으니 공식 안내와 은행 상담으로 최종 확인하시기 바랍니다.")
     else:
         lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
+    lines.append("")
+    _append_lead_cta_block(lines, domain=content_domain)
     lines.append("")
     _append_book_and_related_blocks(lines, related_links=related_links, domain=_content_domain(title, domain))
     return "\n".join(lines).strip() + "\n"
