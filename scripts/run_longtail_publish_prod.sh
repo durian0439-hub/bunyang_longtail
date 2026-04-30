@@ -104,8 +104,10 @@ fi
   /usr/bin/python3 - <<'PY'
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -118,6 +120,8 @@ DB_PATH = os.environ['LONGTAIL_PROD_DB_PATH']
 OUTPUT_BASE = Path(os.environ['LONGTAIL_NAVER_OUTPUT_BASE'])
 OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
 MAX_VARIANT_ATTEMPTS = 3
+PUBLISH_RETRY_MAX = max(1, int(os.environ.get('LONGTAIL_PUBLISH_RETRY_MAX', '6') or '6'))
+PUBLISH_RETRY_COOLDOWN_SEC = max(0, int(os.environ.get('LONGTAIL_PUBLISH_RETRY_COOLDOWN_SEC', '180') or '180'))
 PUBLISH_MODE = os.environ.get('LONGTAIL_PUBLISH_MODE', 'publish').strip().lower() or 'publish'
 if PUBLISH_MODE not in {'draft', 'private', 'publish'}:
     raise SystemExit(f"invalid LONGTAIL_PUBLISH_MODE: {PUBLISH_MODE}")
@@ -174,6 +178,40 @@ def _print_json(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+RECOVERABLE_GPT_IMAGE_MARKERS = (
+    'GPT 이미지 생성 실패',
+    'GPT_WEB_TIMEOUT',
+    'GPT_WEB_NAVIGATION_TIMEOUT',
+    'GPT_WEB_IMAGE_TIMEOUT',
+    'GPT_WEB_RATE_LIMIT',
+    'GPT_WEB_SUBMIT_FAILED',
+    'Locator.click: Timeout',
+    'element is not visible',
+    'prompt-textarea',
+    'Playwright 대기 시간이 초과',
+    'Page.goto: Timeout',
+    'Failed to create a ProcessSingleton',
+)
+
+
+def _is_recoverable_gpt_image_failure(output: str) -> bool:
+    return any(marker in output for marker in RECOVERABLE_GPT_IMAGE_MARKERS)
+
+
+def _reset_gpt_runtime_session(domain: str, bundle_id: int, attempt: int) -> None:
+    runtime_dir = Path(os.environ.get('BUNYANG_LONGTAIL_DATA_DIR', 'data')) / 'gpt_profiles' / '_runtime'
+    shutil.rmtree(runtime_dir, ignore_errors=True)
+    os.environ['LONGTAIL_GPT_RECOVERY_TOKEN'] = f'{domain}_{bundle_id}_{attempt}_{int(time.time())}'
+    _print_json({
+        'status': 'gpt_image_session_reset',
+        'domain': domain,
+        'bundle_id': bundle_id,
+        'attempt': attempt,
+        'removed_runtime_profile_dir': str(runtime_dir),
+        'next_step': 'cooldown_then_resume_same_bundle_with_fresh_browser_session',
+    })
+
+
 def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, category_name: str) -> dict:
     out_dir = OUTPUT_BASE / f'{domain}_bundle_{bundle_id}'
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -194,20 +232,60 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
     if category_no:
         cmd.extend(['--category-no', category_no])
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    print(result.stdout)
-    if result.returncode != 0:
-        if result.stderr:
-            print(result.stderr, file=sys.stderr)
-        raise RuntimeError(f'{domain} publish command failed with code {result.returncode}')
+    last_output = ''
+    for publish_attempt in range(1, PUBLISH_RETRY_MAX + 1):
+        _print_json({
+            'status': 'publish_attempt_start',
+            'domain': domain,
+            'bundle_id': bundle_id,
+            'attempt': publish_attempt,
+            'max_attempts': PUBLISH_RETRY_MAX,
+            'output_root': str(out_dir),
+        })
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        stdout = result.stdout or ''
+        stderr = result.stderr or ''
+        last_output = stdout + ('\n' + stderr if stderr else '')
+        if stdout:
+            print(stdout)
+        if result.returncode == 0:
+            if publish_attempt > 1:
+                _print_json({
+                    'status': 'publish_recovered_after_retry',
+                    'domain': domain,
+                    'bundle_id': bundle_id,
+                    'attempt': publish_attempt,
+                })
+            return {
+                'status': 'published',
+                'domain': domain,
+                'bundle_id': bundle_id,
+                'publish_mode': PUBLISH_MODE,
+                'output_root': str(out_dir),
+            }
+        if stderr:
+            print(stderr, file=sys.stderr)
 
-    return {
-        'status': 'published',
-        'domain': domain,
-        'bundle_id': bundle_id,
-        'publish_mode': PUBLISH_MODE,
-        'output_root': str(out_dir),
-    }
+        recoverable = _is_recoverable_gpt_image_failure(last_output)
+        _print_json({
+            'status': 'publish_attempt_failed',
+            'domain': domain,
+            'bundle_id': bundle_id,
+            'attempt': publish_attempt,
+            'returncode': result.returncode,
+            'recoverable_gpt_image_failure': recoverable,
+            'cooldown_seconds': PUBLISH_RETRY_COOLDOWN_SEC if recoverable and publish_attempt < PUBLISH_RETRY_MAX else 0,
+        })
+        if not recoverable or publish_attempt >= PUBLISH_RETRY_MAX:
+            break
+        _reset_gpt_runtime_session(domain, bundle_id, publish_attempt)
+        if PUBLISH_RETRY_COOLDOWN_SEC:
+            time.sleep(PUBLISH_RETRY_COOLDOWN_SEC)
+
+    raise RuntimeError(
+        f'{domain} publish command failed after {PUBLISH_RETRY_MAX} attempts; '
+        f'last output tail={last_output[-1200:]}'
+    )
 
 
 def run_domain(config: dict) -> dict:

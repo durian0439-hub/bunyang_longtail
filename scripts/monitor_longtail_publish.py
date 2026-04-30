@@ -52,10 +52,30 @@ def tail_log() -> str:
     return LOG_PATH.read_text(encoding="utf-8", errors="ignore")[-12000:]
 
 
+RECOVERABLE_GPT_IMAGE_MARKERS = (
+    "GPT 이미지 생성 실패",
+    "GPT_WEB_TIMEOUT",
+    "GPT_WEB_NAVIGATION_TIMEOUT",
+    "GPT_WEB_IMAGE_TIMEOUT",
+    "GPT_WEB_RATE_LIMIT",
+    "GPT_WEB_SUBMIT_FAILED",
+    "Locator.click: Timeout",
+    "element is not visible",
+    "prompt-textarea",
+    "Playwright 대기 시간이 초과",
+    "Page.goto: Timeout",
+    "Failed to create a ProcessSingleton",
+    '"missing_or_incomplete_domains"',
+)
+
+
 def evaluate() -> CheckResult:
     log_text = tail_log()
     if "error: 리베이스로 풀하기 할 수 없습니다" in log_text:
         return CheckResult("git_dirty", "cron 실행이 dirty working tree 때문에 중단됐습니다.", True)
+    if any(marker in log_text for marker in RECOVERABLE_GPT_IMAGE_MARKERS) and '"status": "cron_domain_summary"' in log_text:
+        if '"published_count": 4' not in log_text or '"missing_or_incomplete_domains": []' not in log_text:
+            return CheckResult("recoverable_gpt_image_or_incomplete", "GPT 이미지/브라우저 계열 실패 또는 미완료 도메인이 있어 재개가 필요합니다.", True)
     if '"status": "noop"' in log_text:
         return CheckResult("noop", "발행 가능한 후보가 없어 noop으로 종료됐습니다.")
     if "done: longtail publish prod" in log_text:
