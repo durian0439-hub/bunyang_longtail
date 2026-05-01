@@ -744,6 +744,8 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertIn("--upload-naver-clip", seen_cmd)
         self.assertIn("--naver-clip-visibility", seen_cmd)
         self.assertIn("public", seen_cmd)
+        privacy_arg_index = seen_cmd.index("--privacy")
+        self.assertEqual(seen_cmd[privacy_arg_index + 1], "public")
         self.assertNotIn("longtail_video_qa_freeze", json.dumps(result, ensure_ascii=False))
         self.assertEqual(seen_publish_kwargs["videos"], [])
 
