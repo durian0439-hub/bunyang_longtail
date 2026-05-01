@@ -16,7 +16,7 @@ LONGTAIL_INFO_BLOG_FORMAT = {
         "본문 섹션: 개념 설명보다 확인 순서, 판단 기준, 예외, 실제 사례를 우선",
         "체크리스트: 단답 나열이 아니라 왜 확인해야 하는지 한 줄 이유 포함",
         "FAQ: 본문 반복이 아닌 후속 질문 해결",
-        "마무리 결론: 다음 행동 1~3개를 구체적으로 제시",
+        "마무리 결론: 단순 요약이 아니라 블로그 고정 판단 코너처럼 다음 행동 1~3개를 구체적으로 제시",
     ],
     "avoid": [
         "광고성 후기, 강의 홍보, 투자 권유, 수익 보장 문체",
@@ -61,6 +61,31 @@ def _data_delivery_requirements(domain: str) -> list[str]:
     return [*BASE_DATA_DELIVERY_REQUIREMENTS, *DOMAIN_DATA_DELIVERY_REQUIREMENTS.get(domain, [])]
 
 
+def _search_friendly_blog_style_rules(domain: str) -> list[str]:
+    """Return reusable blog-style rules adapted for our bunyang/auction domains.
+
+    외부 블로그의 고유 이름이나 코너명을 복제하지 않고, 검색형 제목·개인형 설명 리듬·
+    고정 판단 코너라는 운영 원칙만 우리 도메인에 맞게 재작성한다.
+    """
+    base_rules = [
+        "외부 블로그명, 운영자명, 고유 코너명은 절대 쓰지 말고, 검색형 제목·짧은 문단·고정 판단 코너라는 운영 원칙만 참고합니다.",
+        "제목은 검색 키워드만 나열하지 말고 숫자·금액·기간·조건·리스크 중 1개 이상을 넣어 모바일 피드에서도 클릭 이유가 보이게 씁니다.",
+        "본문은 객관 자료를 바탕으로 쓰되, 실제 운영자가 독자 반응을 알고 설명하는 것처럼 '많이 헷갈리는 지점', '실제로는 여기서 갈립니다' 같은 관찰형 문장을 제한적으로 섞습니다.",
+        "마지막 섹션은 브랜드형 판단 코너처럼 보이게 쓰되, 과장된 투자 권유가 아니라 독자가 바로 확인할 자료와 다음 행동을 정리합니다.",
+    ]
+    if domain == AUCTION_DOMAIN:
+        return [
+            *base_rules,
+            "경매 제목은 지역·물건유형·유찰횟수·최저가·권리/점유/잔금 리스크 중 2~3개를 자연스럽게 조합합니다.",
+            "마무리 결론에는 '입찰 전 최종판단'이라는 고정 코너가 떠오르도록 입찰 가능/보류/회피 기준과 서류 확인 순서를 분명히 씁니다.",
+        ]
+    return [
+        *base_rules,
+        "분양·청약 제목은 지역·단지명·분양가·청약일정·입지·자금조건 중 2~3개를 자연스럽게 조합합니다.",
+        "마무리 결론에는 '청약 전 최종판단'이라는 고정 코너가 떠오르도록 실입주/투자/비추천 대상을 분리해 씁니다.",
+    ]
+
+
 def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> dict[str, Any]:
     domain = str(cluster.get("domain") or DEFAULT_DOMAIN)
     outline = json.loads(cluster["outline_json"])
@@ -97,6 +122,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
         "writing_rules": [
             "글 전체는 롱테일 정보 전달형 블로그 글이어야 합니다. 검색자가 궁금해한 한 가지 질문에 먼저 답하고, 확인 순서와 판단 기준을 뒤에서 넓혀 갑니다.",
             "이 글은 홈판 즉시 노출용이 아니라 검색 누적형 자산입니다. 과한 이슈몰이보다 검색자가 저장하고 다시 볼 수 있는 조건, 예외, 확인 순서를 우선합니다.",
+            *_search_friendly_blog_style_rules(domain),
             "첫 3문장 안에 가능/불가 또는 유리/불리 결론을 넣습니다.",
             "첫 문장은 일반론이나 훈수로 시작하지 말고, 검색자가 처한 상황과 결론을 바로 붙여 씁니다.",
             "사람이 블로그에 직접 쓴 것처럼 써야 합니다. 상담 답변처럼 정답을 내려주는 말투보다, 실제로 많이 헷갈리는 지점을 짚어 주는 설명형 말투를 우선합니다.",
@@ -190,7 +216,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
                 {"heading": "실전 예시 시나리오", "body": "..."},
                 {"heading": "체크리스트", "body": "..."},
                 {"heading": "FAQ", "body": "질문 6개 이상"},
-                {"heading": "마무리 결론", "body": "..."},
+                {"heading": "마무리 결론", "body": "청약 전 최종판단 또는 도메인별 최종판단 코너처럼 대상자별 다음 행동을 분리해 작성"},
             ],
         },
     }
@@ -206,6 +232,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
         )
         user_prompt["writing_rules"] = [
             "글 전체는 롱테일 정보 전달형 블로그 글이어야 합니다. 검색자가 궁금해한 한 가지 경매 질문에 먼저 답하고, 확인 순서와 리스크 판단 기준을 뒤에서 넓혀 갑니다.",
+            *_search_friendly_blog_style_rules(domain),
             "첫 3문장 안에 입찰 가능/보류/회피 또는 먼저 확인할 결론을 넣습니다.",
             "첫 문장은 경매 일반론이 아니라 검색자가 처한 상황과 결론을 바로 붙여 씁니다.",
             "법률·세무·대출·투자 수익을 확정적으로 단정하지 말고, 확인해야 할 서류와 판단 순서를 중심으로 설명합니다.",

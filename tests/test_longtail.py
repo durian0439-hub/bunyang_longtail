@@ -1206,6 +1206,9 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("도입부 첫 2문단", rules)
         self.assertIn("검색 누적형 자산", rules)
         self.assertIn("홈판 낚시", rules)
+        self.assertIn("청약 전 최종판단", rules)
+        self.assertIn("지역·단지명·분양가·청약일정·입지·자금조건", rules)
+        self.assertIn("외부 블로그명, 운영자명, 고유 코너명", rules)
         self.assertNotIn("본문 끝에는 누가 이 전략이 맞는지", rules)
 
     def test_build_prompt_package_includes_domain_data_delivery_requirements(self) -> None:
@@ -1226,6 +1229,9 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("사건번호·소재지·면적·감정가·최저가·입찰보증금", prompt_text)
         self.assertIn("입찰가 산정은 실거래가·전세가·낙찰가율", prompt_text)
         self.assertIn("매각물건명세서", prompt_text)
+        self.assertIn("입찰 전 최종판단", prompt_text)
+        self.assertIn("경매 제목은 지역·물건유형·유찰횟수·최저가", prompt_text)
+        self.assertIn("품질 게이트", prompt_text)
 
     def test_score_article_quality_penalizes_missing_domain_data_axes(self) -> None:
         weak_tax_article = "# 공시가격 세금 정리\n\n공시가격은 세금에서 중요합니다. 홈택스에서 확인합니다."

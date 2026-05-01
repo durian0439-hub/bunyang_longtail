@@ -790,7 +790,7 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertEqual(len(sections), 8)
         self.assertEqual(sections[0].publish_heading, "30초 결론")
         self.assertEqual(sections[2].publish_heading, "일반공급 1순위 조건, 먼저 확인할 것")
-        self.assertEqual(sections[-1].publish_heading, "최종 정리")
+        self.assertEqual(sections[-1].publish_heading, "청약 전 최종판단")
 
     def test_build_publish_title_rewrites_primary_topic_for_seo(self) -> None:
         title = build_publish_title("1순위 조건 기준이 헷갈릴 때, 30대 맞벌이도 가능할까")

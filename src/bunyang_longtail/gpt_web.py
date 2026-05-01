@@ -685,6 +685,8 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
     rule_lines = [f"- {item}" for item in writing_rules]
     data_delivery_requirements = user_prompt.get("data_delivery_requirements", [])
     data_delivery_lines = [f"- {item}" for item in data_delivery_requirements]
+    quality_gates = user_prompt.get("quality_gates", [])
+    quality_gate_lines = [f"- {item}" for item in quality_gates]
     required_sections = user_prompt.get("required_sections", [])
     required_lines = [f"- {item}" for item in required_sections]
     domain = str(user_prompt.get("domain") or "cheongyak")
@@ -739,6 +741,9 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             "",
             "작성 규칙:",
             *rule_lines,
+            "",
+            "품질 게이트:",
+            *quality_gate_lines,
             "",
             "출력 형식:",
             "- 첫 줄은 H1 제목",
