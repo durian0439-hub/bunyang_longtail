@@ -1629,7 +1629,7 @@ def _thumbnail_prompt_text(title: str, sections: list[PublishSection], domain: s
         "Place one very large Korean title or hook directly on the chalkboard, plus one or two tiny support chips. "
         "The title text should actually appear on the image in Korean, large and readable. "
         "Use very short Korean wording only, 1 to 6 words per text block, max 3 text blocks total. "
-        "Add tiny chalk doodles like arrows, stars, underline strokes, and a small house or check icon. "
+        "Add original sticker-like chalk labels, thin divider lines, tiny arrows, stars, underline strokes, and a small house or check icon. Do not copy any existing commercial sticker or blog asset. "
         "Add a very small watermark text '데일리어셈블' near the upper right corner, placed diagonally, subtle but readable. "
         "Color palette: white, pink, yellow, sky blue, mint green on deep green chalkboard. "
         f"핵심 주제는 '{title}' 이고, 강조 포인트는 {chips} 입니다. 핵심 요약은 '{summary}' 입니다. "
@@ -1713,7 +1713,7 @@ def _chalkboard_explainer_prompt(*, title: str, focus_title: str, detail_lines: 
         "A dark green blackboard must fill the whole frame edge to edge. No white poster background, no white card, no blank square, no empty light background. "
         "Front view, realistic chalk dust, handwritten chalk typography, neat educational poster design, thick chalk lines, strong contrast. "
         "Keep one image focused on only one micro-topic. Reduce the amount of information per image and maximize visibility. "
-        "Use much larger chalk text, fewer boxes, fewer arrows, and lots of empty space. "
+        "Use much larger chalk text, fewer boxes, fewer arrows, thin divider lines, original sticker-like chalk labels, and lots of empty space. Do not copy any existing commercial sticker or blog asset. "
         f"{style}"
         "Typography: - Large readable Korean chalk headings - Only short Korean phrases, not long paragraphs - Accurate spacing and line breaks - Handwritten chalk style, soft but legible. "
         "Add a very small watermark text '데일리어셈블' near the upper right corner, placed diagonally, subtle but readable. "
@@ -2377,11 +2377,19 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
         return [
             _auction_lead_line(title),
             "",
+            "조건부 결론은 간단합니다. 권리·점유·잔금 중 하나라도 설명이 안 되면 입찰보다 보류가 먼저입니다.",
+            "",
+            "읽는 순서는 물건 기본정보 → 권리·점유 → 입찰가 상한 → 잔금·명도 → 최종판단입니다.",
+            "",
             _intro_text(sections, domain="auction"),
         ]
     if content_domain == "tax":
         return [
             "부동산 세금은 세목 이름보다 언제 발생하고 어떤 기준으로 계산되는지부터 나눠보는 것이 중요합니다.",
+            "",
+            "조건부 결론은 주택 수, 보유기간, 명의, 기준일이 맞아야 달라집니다. 하나라도 애매하면 신고 전 추가 확인이 먼저입니다.",
+            "",
+            "읽는 순서는 세금 발생 시점 → 계산 기준 → 감면·중과 예외 → 신고처 → 최종 확인입니다.",
             "",
             _intro_text(sections, domain="tax"),
         ]
@@ -2389,11 +2397,19 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
         return [
             "부동산 대출은 상품명보다 소득·기존 대출·주택 수·실행일을 먼저 나눠보는 것이 중요합니다.",
             "",
+            "조건부 결론은 한도와 금리를 확정하는 것이 아니라, 상담 전에 막힐 변수를 먼저 지우는 쪽에 가깝습니다.",
+            "",
+            "읽는 순서는 대출 목적 → DSR·LTV → 기존 대출 → 실행일 → 은행 상담 준비입니다.",
+            "",
             _intro_text(sections, domain="loan"),
         ]
     if topic == "cashflow":
         return [
             "분양가 6억원이면 계약금 6천만원으로 끝나지 않습니다. 옵션비와 취득세, 잔금 시점 현금까지 같이 보면 실제 준비금이 더 커집니다.",
+            "",
+            "조건부 결론은 계약금만 준비됐다고 바로 안전한 것이 아니라, 잔금일 현금표까지 맞아야 신청 부담이 줄어든다는 점입니다.",
+            "",
+            "읽는 순서는 계약금 → 중도금 → 옵션비·취득세 → 잔금대출 → 최종 현금표입니다.",
             "",
             "이 글에서 바로 가져가실 것 3가지",
             "- 계약금, 중도금, 잔금을 어떤 순서로 계산해야 하는지",
@@ -2404,6 +2420,10 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
         return [
             "30대 맞벌이 청약은 막연히 불리한 게임이 아니라, 어떤 공급에서 판단하느냐에 따라 결과가 크게 갈립니다.",
             "",
+            "조건부 결론은 특별공급이 막혀도 일반공급 1순위 가능성은 따로 남을 수 있다는 점입니다.",
+            "",
+            "읽는 순서는 공급유형 분리 → 통장·거주요건 → 소득·자산 → 세대 기준 → 신청 전 최종 확인입니다.",
+            "",
             "이 글에서 바로 가져가실 것 3가지",
             "- 일반공급과 특별공급을 어디서 갈라서 봐야 하는지",
             "- 맞벌이 부부가 실제로 가장 자주 막히는 지점이 어디인지",
@@ -2411,6 +2431,10 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
         ]
     return [
         "청약은 세대 기준, 일정 기준일, 자금 계획을 따로 나눠 보면 실수가 줄어듭니다.",
+        "",
+        "조건부 결론은 자격, 일정, 자금 중 하나라도 맞지 않으면 신청보다 추가 확인이 먼저라는 점입니다.",
+        "",
+        "읽는 순서는 자격 → 일정 → 자금 → 예외 → 공고문 최종 확인입니다.",
         "",
         _intro_text(sections, domain=content_domain),
     ]
@@ -2423,6 +2447,18 @@ DEFAULT_LEAD_CTA_FORM_URL = (
     "https://docs.google.com/forms/d/e/"
     "1FAIpQLSf9lXBUwdGRjDVqbtoYUChO_isJxKQpxbYXcFxNDlQNubZPiw/viewform"
 )
+DECORATIVE_STICKER_LABELS = {
+    "상단 요약": "〔핵심 요약〕",
+    "이 글에서 바로 답하는 질문": "〔질문 정리〕",
+    "핵심 조건 정리": "〔조건 체크〕",
+    "헷갈리기 쉬운 예외": "〔예외 체크〕",
+    "실전 예시 시나리오": "〔상황 예시〕",
+    "체크리스트": "〔최종 체크〕",
+    "FAQ": "〔자주 묻는 질문〕",
+    "마무리 결론": "〔마무리 판단〕",
+}
+
+
 RELATED_CATEGORY_LABELS = {
     "cheongyak": "How To 분양",
     "auction": "How To 경매",
@@ -2435,6 +2471,24 @@ CTA_DOMAIN_LABELS = {
     "tax": "부동산 세금 기준",
     "loan": "대출 한도·금리·상환",
 }
+
+
+def _opening_decorative_block(title: str, *, domain: str | None = None) -> list[str]:
+    label = {
+        "auction": "경매 판단",
+        "tax": "세금 기준",
+        "loan": "대출 체크",
+    }.get(_content_domain(title, domain), "청약 판단")
+    return [
+        "“",
+        f"**{_trim_text(_clean(title), max_len=46)}**",
+        "---",
+        f"〔{label} 포인트〕",
+    ]
+
+
+def _decorative_sticker_for_section(section: PublishSection) -> str:
+    return DECORATIVE_STICKER_LABELS.get(section.raw_heading, DECORATIVE_STICKER_LABELS.get(section.publish_heading, "〔확인 포인트〕"))
 
 
 def _book_link_url_for_domain(domain: str | None = None) -> str:
@@ -2540,6 +2594,8 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
         lines.append(f"[[IMAGE:{image_index}]]")
         lines.append("")
 
+    lines.extend(_opening_decorative_block(title, domain=domain))
+    lines.append("")
     lines.extend(_lead_blocks(title, sections, domain=domain))
     lines.append("")
 
@@ -2548,13 +2604,21 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
         lines.append("")
 
     for section in sections:
+        lines.append("---")
+        lines.append("")
         lines.append(f"## {section.publish_heading}")
         lines.append("")
+        inserted_section_image = False
         for image_index in slot_to_indexes.get(section.publish_heading, []):
             lines.append(f"[[IMAGE:{image_index}]]")
             lines.append("")
+            inserted_section_image = True
         for image_index in slot_to_indexes.get(f"{section.publish_heading}::before", []):
             lines.append(f"[[IMAGE:{image_index}]]")
+            lines.append("")
+            inserted_section_image = True
+        if inserted_section_image:
+            lines.append(_decorative_sticker_for_section(section))
             lines.append("")
         _append_section_publish_lines(lines, _section_lines_for_publish(title, section), inline_table_indexes)
         lines.append("")
@@ -2696,7 +2760,7 @@ def markdown_to_html(markdown: str) -> str:
         "h2{font-size:25px;font-weight:800;line-height:1.38;color:#123a70;letter-spacing:-0.02em;margin:38px 0 16px;padding-left:14px;border-left:5px solid #ea643f;}",
         "h3{font-size:21px;font-weight:800;line-height:1.5;color:#111827;letter-spacing:-0.02em;margin:30px 0 10px;}",
         "p{font-size:18px;margin-top:14px;word-break:keep-all;} p strong{font-weight:800;color:#111827;}",
-        "hr{border:0;border-top:1px solid #e5e7eb;margin:32px 0;}",
+        "hr{border:0;border-top:1px solid #e5e7eb;margin:32px 0;} .decor-divider{border-top:1px solid rgba(17,24,39,.28);margin:30px 0 26px;} .decor-quote-mark{font-size:34px;line-height:1;color:#9ca3af;margin:18px 0 4px;} .decor-sticker{display:inline-block;font-size:15px;font-weight:800;color:#123a70;background:#fff7ed;border:1px solid #f1d2bf;border-radius:999px;padding:6px 12px;margin-top:12px;}",
         "</style>",
     ]
     for raw_line in str(markdown or "").splitlines():
@@ -2713,6 +2777,10 @@ def markdown_to_html(markdown: str) -> str:
             html_lines.append(f"<h3>{_emphasize_publish_text(_normalize_faq_question_line(line))}</h3>")
         elif line == "---":
             html_lines.append("<hr>")
+        elif line == "“":
+            html_lines.append('<p class="decor-quote-mark">“</p>')
+        elif line.startswith("〔") and line.endswith("〕"):
+            html_lines.append(f'<p class="decor-sticker">{_emphasize_publish_text(line)}</p>')
         elif re.fullmatch(r"\[\[(?:IMAGE|VIDEO):\d+\]\]", line):
             html_lines.append(f"<p>{line}</p>")
         elif line.startswith("- "):

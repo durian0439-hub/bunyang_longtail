@@ -1233,11 +1233,32 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("경매 제목은 지역·물건유형·유찰횟수·최저가", prompt_text)
         self.assertIn("품질 게이트", prompt_text)
 
+    def test_build_prompt_package_includes_decision_check_intro_contract(self) -> None:
+        cluster = {
+            "outline_json": json.dumps([{"heading": "상단 요약", "points": ["핵심"]}], ensure_ascii=False),
+            "primary_keyword": "계약금",
+            "secondary_keyword": "중도금",
+            "comparison_keyword": "잔금",
+            "audience": "30대 맞벌이",
+            "search_intent": "계산",
+            "scenario": "월 상환액을 따질 때",
+        }
+        variant = {"title": "계약금 중도금 잔금 계산", "angle": "비교형"}
+        prompt = build_prompt_package(cluster, variant)
+        prompt_text = build_text_prompt(prompt)
+        self.assertIn("부동산 의사결정 체크 블로그", prompt_text)
+        self.assertIn("검색 의도 → 조건부 결론 → 읽는 순서", prompt_text)
+        self.assertIn("도입부에 검색 의도, 조건부 결론, 읽는 순서", prompt_text)
+        self.assertIn("첫 화면 300자 안에 기준일·금액·세대수·유찰횟수", prompt_text)
+        self.assertIn("공식 확인처", prompt_text)
+
     def test_score_article_quality_penalizes_missing_domain_data_axes(self) -> None:
         weak_tax_article = "# 공시가격 세금 정리\n\n공시가격은 세금에서 중요합니다. 홈택스에서 확인합니다."
         score, meta = score_article_quality(weak_tax_article)
         self.assertLess(score, 10.0)
         self.assertIn("조건 변수", meta["data_delivery_missing"])
+        self.assertIn("읽는 순서", meta["decision_intro_missing"])
+        self.assertIn("숫자·기준일", meta["first_screen_evidence_missing"])
 
     def test_build_text_prompt_uses_neutral_action_guide_phrase(self) -> None:
         cluster = {

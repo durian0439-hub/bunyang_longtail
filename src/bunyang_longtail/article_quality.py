@@ -16,6 +16,44 @@ DOMAIN_MARKERS = {
     "loan": ("대출", "DSR", "LTV", "DTI", "주담대", "잔금대출", "경락잔금대출", "은행 상담"),
 }
 
+DECISION_CHECK_INTRO_GROUPS = {
+    "검색 의도": ("검색", "궁금", "헷갈", "막히", "상황"),
+    "조건부 결론": ("가능", "보류", "회피", "추가 확인", "유리", "불리", "먼저"),
+    "읽는 순서": ("읽는 순서", "순서로", "먼저", "다음", "마지막"),
+}
+
+FIRST_SCREEN_EVIDENCE_GROUPS = {
+    "숫자·기준일": (
+        "원",
+        "만원",
+        "억",
+        "%",
+        "세대",
+        "㎡",
+        "평",
+        "일",
+        "년",
+        "회",
+        "DSR",
+        "LTV",
+        "DTI",
+    ),
+    "공식 확인처": (
+        "청약홈",
+        "입주자모집공고",
+        "모집공고",
+        "법원경매정보",
+        "매각물건명세서",
+        "등기부등본",
+        "홈택스",
+        "위택스",
+        "국세청",
+        "은행 상담",
+        "주택도시기금",
+    ),
+}
+
+
 DATA_DELIVERY_GROUPS = {
     "auction": {
         "물건 기본정보": ("사건번호", "소재지", "면적", "감정가", "최저가", "입찰보증금"),
@@ -66,6 +104,44 @@ def _clean_lines(markdown: str) -> list[str]:
     return [line.strip() for line in str(markdown or "").splitlines() if line.strip()]
 
 
+def _intro_decision_check_findings(markdown: str) -> tuple[list[str], list[str]]:
+    intro_lines: list[str] = []
+    for raw_line in str(markdown or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith("## ") and intro_lines:
+            break
+        if line.startswith("# "):
+            continue
+        if line:
+            intro_lines.append(line)
+        if len(" ".join(intro_lines)) >= 900:
+            break
+    intro = "\n".join(intro_lines)[:900]
+    hits: list[str] = []
+    missing: list[str] = []
+    for label, tokens in DECISION_CHECK_INTRO_GROUPS.items():
+        if any(token in intro for token in tokens):
+            hits.append(label)
+        else:
+            missing.append(label)
+    return hits, missing
+
+
+def _first_screen_evidence_findings(markdown: str) -> tuple[list[str], list[str]]:
+    first_screen = str(markdown or "")[:500]
+    hits: list[str] = []
+    missing: list[str] = []
+    for label, tokens in FIRST_SCREEN_EVIDENCE_GROUPS.items():
+        has_hit = any(token in first_screen for token in tokens)
+        if label == "숫자·기준일":
+            has_hit = has_hit or bool(re.search(r"\d", first_screen))
+        if has_hit:
+            hits.append(label)
+        else:
+            missing.append(label)
+    return hits, missing
+
+
 def score_article_quality(markdown: str) -> tuple[float, dict[str, float | int | list[str]]]:
     lines = _clean_lines(markdown)
     text = "\n".join(lines)
@@ -102,6 +178,16 @@ def score_article_quality(markdown: str) -> tuple[float, dict[str, float | int |
         penalties += min(2.0, len(data_delivery_missing) * 0.5)
         repeated_hits.extend(f"data_missing:{item}" for item in data_delivery_missing)
 
+    decision_intro_hits, decision_intro_missing = _intro_decision_check_findings(markdown)
+    if decision_intro_missing:
+        penalties += min(1.5, len(decision_intro_missing) * 0.5)
+        repeated_hits.extend(f"decision_intro_missing:{item}" for item in decision_intro_missing)
+
+    first_screen_evidence_hits, first_screen_evidence_missing = _first_screen_evidence_findings(markdown)
+    if first_screen_evidence_missing:
+        penalties += min(1.2, len(first_screen_evidence_missing) * 0.6)
+        repeated_hits.extend(f"first_screen_missing:{item}" for item in first_screen_evidence_missing)
+
     score = max(0.0, 10.0 - penalties)
     return score, {
         "line_count": len(lines),
@@ -110,5 +196,9 @@ def score_article_quality(markdown: str) -> tuple[float, dict[str, float | int |
         "repeated_hits": repeated_hits,
         "data_delivery_hits": data_delivery_hits,
         "data_delivery_missing": data_delivery_missing,
+        "decision_intro_hits": decision_intro_hits,
+        "decision_intro_missing": decision_intro_missing,
+        "first_screen_evidence_hits": first_screen_evidence_hits,
+        "first_screen_evidence_missing": first_screen_evidence_missing,
         "penalty": round(penalties, 2),
     }

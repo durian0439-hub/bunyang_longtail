@@ -923,7 +923,30 @@ Q1. 바로 신청해도 되나요?
         )
 
         self.assertNotIn("...", markdown)
+        self.assertIn("“\n**가점제 규제지역 청약 전 1주택 갈아타기 준비자가 놓치면 탈락하는 포인트**\n---\n〔청약 판단 포인트〕", markdown)
         self.assertIn("기존 주택 처분 조건, 세대 기준, 자금 일정을 하나라도 놓치면", markdown)
+
+    def test_build_publish_markdown_inserts_decorative_sticker_below_section_image(self) -> None:
+        article = """상단 요약
+
+요약 본문입니다.
+
+핵심 조건 정리
+
+조건 본문입니다.
+"""
+        _, sections = parse_publish_sections(
+            article,
+            title_hint="분양 계약금 중도금 잔금 체크",
+        )
+        target_section = next(section for section in sections if section.publish_heading == "계약금 중도금 잔금 비율, 먼저 어떻게 계산하나")
+        markdown = target.build_publish_markdown(
+            title="분양 계약금 중도금 잔금 체크",
+            sections=sections,
+            assets=[target.PublishAsset(slot=target_section.publish_heading, kind="section", label="조건", path="section.png")],
+        )
+
+        self.assertIn(f"## {target_section.publish_heading}\n\n[[IMAGE:1]]\n\n〔조건 체크〕", markdown)
 
     def test_build_publish_markdown_formats_related_link_on_separate_lines(self) -> None:
         _, sections = parse_publish_sections(
