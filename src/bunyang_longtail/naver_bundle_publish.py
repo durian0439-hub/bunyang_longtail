@@ -2722,7 +2722,7 @@ def _inline_markdown_links(line: str) -> str:
     def repl(match: re.Match[str]) -> str:
         label = html.escape(str(match.group(1)), quote=False)
         href = html.escape(str(match.group(2)), quote=True)
-        return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{label}</a>'
+        return f'<a href="{href}" target="_self">{label}</a>'
 
     return re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", repl, str(line or ""))
 
