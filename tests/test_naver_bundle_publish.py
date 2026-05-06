@@ -251,8 +251,8 @@ A. 서류와 현장을 다시 확인해야 합니다.
             self.assertNotIn("입주자모집공고", result.markdown)
             self.assertIn("경매권리분석", result.tags)
             self.assertIn("말소기준권리", result.tags)
-            self.assertIn("https://link.coupang.com/a/espLX0", result.markdown)
-            self.assertNotIn("https://link.coupang.com/a/esfszm", result.markdown)
+            self.assertNotIn("link." + "cou" + "pang.com", result.markdown)
+            self.assertNotIn("쿠" + "팡", result.markdown)
             self.assertNotIn("청약정보", result.tags)
 
     def test_auction_long_article_with_colon_headings_is_not_replaced_by_cheongyak_fallback(self) -> None:
@@ -1008,7 +1008,8 @@ Q1. 바로 신청해도 되나요?
 
         self.assertIn("## 내 상황 기준 체크리스트 받아보기", markdown)
         self.assertIn("부동산 상황 사전점검 신청\nhttps://forms.example/lead", markdown)
-        self.assertLess(markdown.index("내 상황 기준 체크리스트"), markdown.index(target.BOOK_NOTICE_TEXT))
+        self.assertNotIn("link." + "cou" + "pang.com", markdown)
+        self.assertNotIn("쿠" + "팡", markdown)
 
     def test_build_publish_markdown_can_disable_lead_cta(self) -> None:
         _, sections = parse_publish_sections(

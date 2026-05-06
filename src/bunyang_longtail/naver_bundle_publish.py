@@ -2440,9 +2440,6 @@ def _lead_blocks(title: str, sections: list[PublishSection], *, domain: str | No
     ]
 
 
-BOOK_LINK_URL = "https://link.coupang.com/a/esfszm"
-AUCTION_BOOK_LINK_URL = "https://link.coupang.com/a/espLX0"
-BOOK_NOTICE_TEXT = '"이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."'
 DEFAULT_LEAD_CTA_FORM_URL = (
     "https://docs.google.com/forms/d/e/"
     "1FAIpQLSf9lXBUwdGRjDVqbtoYUChO_isJxKQpxbYXcFxNDlQNubZPiw/viewform"
@@ -2491,10 +2488,6 @@ def _decorative_sticker_for_section(section: PublishSection) -> str:
     return DECORATIVE_STICKER_LABELS.get(section.raw_heading, DECORATIVE_STICKER_LABELS.get(section.publish_heading, "〔확인 포인트〕"))
 
 
-def _book_link_url_for_domain(domain: str | None = None) -> str:
-    return AUCTION_BOOK_LINK_URL if _content_domain("", domain) == "auction" else BOOK_LINK_URL
-
-
 def _related_category_label(domain: str | None = None) -> str:
     return RELATED_CATEGORY_LABELS.get(_content_domain("", domain), "카테고리")
 
@@ -2525,14 +2518,7 @@ def _append_lead_cta_block(lines: list[str], *, domain: str | None = None) -> No
     lines.append("※ 본 신청은 일반 정보 확인 및 체크리스트 제공 목적입니다. 세무·법률·대출 가능 여부는 실제 서류와 전문가 확인이 필요합니다.")
 
 
-def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> None:
-    lines.append("---")
-    lines.append("")
-    lines.append(BOOK_NOTICE_TEXT)
-    book_link_url = _book_link_url_for_domain(domain)
-    if book_link_url:
-        lines.append(book_link_url)
-
+def _append_related_blocks(lines: list[str], *, related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> None:
     cleaned_related: list[dict[str, str]] = []
     for item in related_links or []:
         title = (item.get("title") or "이전 글").strip()
@@ -2543,6 +2529,7 @@ def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dic
         cleaned_related.append({"category_name": category_name, "title": title, "url": url})
 
     if cleaned_related:
+        lines.append("---")
         lines.append("")
         lines.append("관련 글")
         for item in cleaned_related:
@@ -2641,7 +2628,7 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
     lines.append("")
     _append_lead_cta_block(lines, domain=content_domain)
     lines.append("")
-    _append_book_and_related_blocks(lines, related_links=related_links, domain=_content_domain(title, domain))
+    _append_related_blocks(lines, related_links=related_links, domain=_content_domain(title, domain))
     return "\n".join(lines).strip() + "\n"
 
 
