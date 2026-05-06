@@ -961,7 +961,7 @@ Q1. 바로 신청해도 되나요?
                 {
                     "category_name": "How To 분양",
                     "title": "규제지역 거주의무와 재당첨 제한 1주택 갈아타기",
-                    "url": "https://blog.naver.com/example/recent",
+                    "url": "https://blog.naver.com/PostView.naver?blogId=example&Redirect=View&logNo=recent&categoryNo=16&contentLength=123",
                 }
             ],
         )

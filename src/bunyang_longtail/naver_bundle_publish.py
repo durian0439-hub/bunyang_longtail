@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from statistics import mean
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(os.getenv("BUNYANG_LONGTAIL_ROOT", Path(__file__).resolve().parents[2])).resolve()
 
@@ -2492,6 +2493,25 @@ def _related_category_label(domain: str | None = None) -> str:
     return RELATED_CATEGORY_LABELS.get(_content_domain("", domain), "카테고리")
 
 
+def _canonical_naver_blog_url(url: str | None) -> str:
+    raw = str(url or "").strip().replace("&amp;", "&")
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if "blog.naver.com" not in parsed.netloc:
+        return raw
+    query = parse_qs(parsed.query)
+    blog_id = str((query.get("blogId") or [""])[0]).strip()
+    log_no = str((query.get("logNo") or [""])[0]).strip()
+    parts = [part for part in parsed.path.split("/") if part]
+    if not log_no and len(parts) >= 2 and parts[0] not in {"PostView.naver", "PostWriteForm.naver"}:
+        blog_id = blog_id or parts[0]
+        log_no = parts[1]
+    if blog_id and log_no:
+        return f"https://blog.naver.com/{blog_id}/{log_no}"
+    return raw
+
+
 def _lead_cta_form_url() -> str:
     if not _env_flag("LONGTAIL_LEAD_CTA_ENABLED", default=True):
         return ""
@@ -2522,7 +2542,7 @@ def _append_related_blocks(lines: list[str], *, related_links: list[dict[str, st
     cleaned_related: list[dict[str, str]] = []
     for item in related_links or []:
         title = (item.get("title") or "이전 글").strip()
-        url = (item.get("url") or "").strip()
+        url = _canonical_naver_blog_url(item.get("url"))
         if not url:
             continue
         category_name = (item.get("category_name") or item.get("category") or _related_category_label(domain)).strip()

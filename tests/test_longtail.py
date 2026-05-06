@@ -287,11 +287,16 @@ class LongtailPlannerTest(unittest.TestCase):
         synced_hub = get_curriculum_hub_post(self.db_path)
         self.assertEqual(synced_hub["needs_sync"], 0)
 
-        mark_published(self.db_path, first["variant_id"], "https://blog.naver.com/example/az-1")
+        mark_published(
+            self.db_path,
+            first["variant_id"],
+            "https://blog.naver.com/PostView.naver?blogId=example&Redirect=View&logNo=az-1&categoryNo=16",
+        )
         changed_hub = get_curriculum_hub_post(self.db_path)
         self.assertEqual(changed_hub["linked_node_count"], 1)
         self.assertEqual(changed_hub["needs_sync"], 1)
-        self.assertIn('<a href="https://blog.naver.com/example/az-1">지금 집을 사야 할까, 청약을 기다려야 할까</a>', changed_hub["body_markdown"])
+        self.assertNotIn("<a href=", changed_hub["body_markdown"])
+        self.assertIn("1. 지금 집을 사야 할까, 청약을 기다려야 할까\nhttps://blog.naver.com/example/az-1", changed_hub["body_markdown"])
 
     def test_load_bundle_article_adds_curriculum_hub_related_link_only(self) -> None:
         seed_az_curriculum(self.db_path)

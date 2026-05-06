@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from .catalog import AUCTION_DOMAIN, DEFAULT_DOMAIN, LOAN_DOMAIN, SUPPORTED_DOMAINS, TAX_DOMAIN
 from .database import connect, fetch_all, fetch_one, init_db
@@ -23,6 +23,26 @@ DOMAIN_LABELS = {
     TAX_DOMAIN: "세금",
     LOAN_DOMAIN: "대출",
 }
+
+
+def _canonical_naver_blog_url(url: str | None) -> str:
+    """네이버 글 URL을 본문 노출에 적합한 짧은 canonical URL로 정규화한다."""
+    raw = str(url or "").strip().replace("&amp;", "&")
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if "blog.naver.com" not in parsed.netloc:
+        return raw
+    query = parse_qs(parsed.query)
+    blog_id = str((query.get("blogId") or [""])[0]).strip()
+    log_no = str((query.get("logNo") or [""])[0]).strip()
+    parts = [part for part in parsed.path.split("/") if part]
+    if not log_no and len(parts) >= 2 and parts[0] not in {"PostView.naver", "PostWriteForm.naver"}:
+        blog_id = blog_id or parts[0]
+        log_no = parts[1]
+    if blog_id and log_no:
+        return f"https://blog.naver.com/{blog_id}/{log_no}"
+    return raw
 
 
 @dataclass(frozen=True)
@@ -449,7 +469,8 @@ def render_curriculum_hub_markdown(*, track: dict[str, Any], rows: list[dict[str
         domain_label = DOMAIN_LABELS.get(str(row.get("domain") or DEFAULT_DOMAIN), str(row.get("domain") or ""))
         url = str(row.get("naver_url") or "").strip()
         if url:
-            lines.append(f'{chapter_no}. <a href="{escape(url, quote=True)}">{escape(chapter_title)}</a>')
+            lines.append(f"{chapter_no}. {chapter_title}")
+            lines.append(_canonical_naver_blog_url(url))
         else:
             lines.append(f"{chapter_no}. {chapter_title} (발행 예정)")
         lines.append(f"   - {domain_label} · {row.get('primary_keyword') or ''}".rstrip())
