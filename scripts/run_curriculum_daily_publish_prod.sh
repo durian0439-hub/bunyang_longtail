@@ -89,6 +89,7 @@ fi
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -160,7 +161,6 @@ RECOVERABLE_GPT_IMAGE_MARKERS = (
     'Playwright 대기 시간이 초과',
     'Page.goto: Timeout',
     'Failed to create a ProcessSingleton',
-    'publish command timed out',
 )
 
 
@@ -220,25 +220,40 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
             'max_attempts': PUBLISH_RETRY_MAX,
             'output_root': str(out_dir),
         })
+        timed_out = False
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=PUBLISH_COMMAND_TIMEOUT_SEC,
-            )
-            returncode = result.returncode
-            stdout = result.stdout or ''
-            stderr = result.stderr or ''
-        except subprocess.TimeoutExpired as exc:
+            stdout, stderr = proc.communicate(timeout=PUBLISH_COMMAND_TIMEOUT_SEC)
+            returncode = proc.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                stdout, stderr = proc.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                stdout, stderr = proc.communicate()
             returncode = 124
-            stdout = exc.stdout or ''
-            stderr = exc.stderr or ''
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode('utf-8', errors='replace')
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode('utf-8', errors='replace')
-            stderr = (stderr + '\n' if stderr else '') + f'publish command timed out after {PUBLISH_COMMAND_TIMEOUT_SEC}s'
+            stdout = stdout or ''
+            stderr = stderr or ''
+            stderr = (stderr + '\n' if stderr else '') + (
+                f'publish command timed out after {PUBLISH_COMMAND_TIMEOUT_SEC}s; '
+                'process group killed and retry disabled because external publish state is uncertain'
+            )
+        stdout = stdout or ''
+        stderr = stderr or ''
         last_output = stdout + ('\n' + stderr if stderr else '')
         if stdout:
             print(stdout)
@@ -252,7 +267,7 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
             }
         if stderr:
             print(stderr, file=sys.stderr)
-        recoverable = _is_recoverable_gpt_image_failure(last_output)
+        recoverable = False if timed_out else _is_recoverable_gpt_image_failure(last_output)
         _print_json({
             'status': 'publish_attempt_failed',
             'domain': domain,
@@ -260,6 +275,7 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
             'attempt': publish_attempt,
             'returncode': returncode,
             'recoverable_gpt_image_failure': recoverable,
+            'external_state_uncertain': timed_out,
             'cooldown_seconds': PUBLISH_RETRY_COOLDOWN_SEC if recoverable and publish_attempt < PUBLISH_RETRY_MAX else 0,
         })
         if not recoverable or publish_attempt >= PUBLISH_RETRY_MAX:

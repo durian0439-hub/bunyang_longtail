@@ -541,7 +541,11 @@ A. 서류와 현장을 다시 확인해야 합니다.
         fake_conn = MagicMock()
         fake_conn.__enter__.return_value = fake_conn
         fake_conn.__exit__.return_value = False
-        fake_conn.execute.return_value.fetchone.return_value = (999,)
+        fake_conn.execute.return_value.fetchone.return_value = {
+            "variant_id": 999,
+            "bundle_status": "bundled",
+            "variant_status": "drafted",
+        }
 
         with patch.object(
             module,
@@ -549,7 +553,7 @@ A. 서류와 현장을 다시 확인해야 합니다.
             return_value={"status": "ok"},
         ) as mocked_publish, patch.object(module, "connect", return_value=fake_conn), patch.object(
             module,
-            "is_recent_publish_conflict",
+            "is_publish_conflict",
             return_value=None,
         ), patch.object(
             sys,

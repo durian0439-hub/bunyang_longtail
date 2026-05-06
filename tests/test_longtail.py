@@ -29,6 +29,7 @@ from bunyang_longtail.codex_cli import (
 from bunyang_longtail.config import OPENAI_COMPAT_IMAGE_MODEL, OPENAI_COMPAT_TEXT_MODEL
 from bunyang_longtail.cron_publish import (
     describe_unpublishable_run_result,
+    is_publish_conflict,
     is_recent_publish_conflict,
     run_bundle_target_from_candidate,
     select_curriculum_publish_candidate,
@@ -1189,6 +1190,72 @@ class LongtailPlannerTest(unittest.TestCase):
             candidate = select_publish_candidate(conn)
 
         self.assertIsNone(candidate)
+
+    def test_publish_conflict_blocks_same_variant_even_outside_recent_guard(self) -> None:
+        with connect(self.db_path) as conn:
+            variant_ids: list[int] = []
+            for idx in range(1, 6):
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        semantic_key, family, primary_keyword, secondary_keyword, audience,
+                        search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                    ) VALUES (?, '테스트', ?, '보조', '30대 맞벌이', '계산', ?, '비교', 100, '[]', '{}')
+                    """,
+                    (f"all-history-conflict-{idx}", f"키워드{idx}", f"상황{idx}"),
+                )
+                cluster_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status)
+                    VALUES (?, ?, '판단형', ?, ?, 100, '{}', 'queued')
+                    """,
+                    (cluster_id, f"all-history-conflict-variant-{idx}", f"전체이력 테스트 {idx}", f"all-history-conflict-{idx}"),
+                )
+                variant_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        mark_published(self.db_path, variant_ids[0], "https://blog.naver.com/example/old-published")
+        for idx, variant_id in enumerate(variant_ids[1:], start=1):
+            mark_published(self.db_path, variant_id, f"https://blog.naver.com/example/recent-filler-{idx}")
+
+        with connect(self.db_path) as conn:
+            self.assertIsNone(is_recent_publish_conflict(conn, variant_id=variant_ids[0]))
+            conflict = is_publish_conflict(conn, variant_id=variant_ids[0])
+
+        self.assertIsNotNone(conflict)
+        self.assertEqual(conflict["conflict_reason"], "variant")
+
+    def test_mark_published_is_idempotent_for_same_variant(self) -> None:
+        replenish_queue(self.db_path, min_queued=10, variants_per_cluster=1)
+        variant_id = list_variants(self.db_path, status="queued", limit=1)[0]["id"]
+
+        mark_published(self.db_path, variant_id, "https://blog.naver.com/example/first")
+        mark_published(self.db_path, variant_id, "https://blog.naver.com/example/second")
+
+        with connect(self.db_path) as conn:
+            history_count = conn.execute(
+                "SELECT COUNT(*) FROM publish_history WHERE variant_id = ? AND channel = 'naver_blog'",
+                (variant_id,),
+            ).fetchone()[0]
+            variant = conn.execute("SELECT use_count, status FROM topic_variant WHERE id = ?", (variant_id,)).fetchone()
+            history = conn.execute(
+                "SELECT naver_url FROM publish_history WHERE variant_id = ? AND channel = 'naver_blog'",
+                (variant_id,),
+            ).fetchone()
+
+        self.assertEqual(history_count, 1)
+        self.assertEqual(variant["use_count"], 1)
+        self.assertEqual(variant["status"], "published")
+        self.assertEqual(history["naver_url"], "https://blog.naver.com/example/first")
+
+    def test_curriculum_runner_timeout_kills_process_group_and_disables_retry(self) -> None:
+        script = (ROOT / "scripts" / "run_curriculum_daily_publish_prod.sh").read_text(encoding="utf-8")
+        marker_block = script.split("RECOVERABLE_GPT_IMAGE_MARKERS = (", 1)[1].split(")", 1)[0]
+
+        self.assertIn("start_new_session=True", script)
+        self.assertIn("os.killpg(proc.pid, signal.SIGTERM)", script)
+        self.assertIn("external_state_uncertain", script)
+        self.assertNotIn("publish command timed out", marker_block)
 
     def test_select_publish_candidate_recovers_stale_rendering_image_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)

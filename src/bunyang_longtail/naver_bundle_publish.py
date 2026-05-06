@@ -3286,6 +3286,50 @@ def _extract_naver_clip_url(video_result: dict[str, Any]) -> str:
     return ""
 
 
+def _load_existing_naver_clip_publish_result(publish_bundle: PublishBundle) -> dict[str, Any] | None:
+    """Reuse a clip already uploaded for this bundle instead of uploading again.
+
+    A timed-out publish command can leave an externally visible Naver Clip even
+    when the parent process did not finish cleanly. Retrying must embed the
+    existing clip URL rather than creating another public clip for the same
+    article.
+    """
+    meta_path = Path(publish_bundle.meta_path)
+    video_dir = meta_path.parent / "video"
+    candidate_paths = [
+        meta_path,
+        video_dir / f"{publish_bundle.apt_id}.youtube.json",
+        video_dir / "naver_clip_web" / "result.json",
+    ]
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        nested = payload.get("blog_inline_video_result")
+        if isinstance(nested, dict):
+            nested_video = nested.get("video_publish")
+            clip_url = _clean(str(nested.get("clip_url") or ""))
+            if isinstance(nested_video, dict):
+                nested_clip_url = _extract_naver_clip_url(nested_video)
+                if nested_clip_url:
+                    nested_video = dict(nested_video)
+                    nested_video["reused_existing_clip"] = True
+                    return nested_video
+            if clip_url:
+                return {"status": "ok", "share_url": clip_url, "reused_existing_clip": True}
+        clip_url = _extract_naver_clip_url(payload)
+        if clip_url:
+            reused = dict(payload)
+            reused["reused_existing_clip"] = True
+            return reused
+    return None
+
+
 def _insert_naver_clip_url_after_lead_image(markdown: str, clip_url: str) -> str:
     url = _clean(clip_url)
     if not url:
@@ -3346,20 +3390,22 @@ def publish_bundle_to_naver(
 
     if inline_video_enabled and _env_flag("LONGTAIL_VIDEO_UPLOAD", default=False):
         if blog_video_mode in {"naver_clip", "naver_clip_embed", "clip", "clip_embed"}:
-            previous_clip_first = os.environ.get("LONGTAIL_NAVER_CLIP_FIRST")
-            os.environ["LONGTAIL_NAVER_CLIP_FIRST"] = "1"
-            try:
-                pre_blog_video_result = _maybe_publish_longtail_video(
-                    publish_bundle=publish_bundle,
-                    publish_result={},
-                    category_name=category_name,
-                    reuse_existing_video=False,
-                )
-            finally:
-                if previous_clip_first is None:
-                    os.environ.pop("LONGTAIL_NAVER_CLIP_FIRST", None)
-                else:
-                    os.environ["LONGTAIL_NAVER_CLIP_FIRST"] = previous_clip_first
+            pre_blog_video_result = _load_existing_naver_clip_publish_result(publish_bundle)
+            if pre_blog_video_result is None:
+                previous_clip_first = os.environ.get("LONGTAIL_NAVER_CLIP_FIRST")
+                os.environ["LONGTAIL_NAVER_CLIP_FIRST"] = "1"
+                try:
+                    pre_blog_video_result = _maybe_publish_longtail_video(
+                        publish_bundle=publish_bundle,
+                        publish_result={},
+                        category_name=category_name,
+                        reuse_existing_video=False,
+                    )
+                finally:
+                    if previous_clip_first is None:
+                        os.environ.pop("LONGTAIL_NAVER_CLIP_FIRST", None)
+                    else:
+                        os.environ["LONGTAIL_NAVER_CLIP_FIRST"] = previous_clip_first
             clip_url = _extract_naver_clip_url(pre_blog_video_result)
             if not clip_url:
                 raise RuntimeError(

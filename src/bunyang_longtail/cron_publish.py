@@ -59,11 +59,11 @@ def run_bundle_target_from_candidate(candidate_row: Mapping[str, Any]) -> dict[s
     return {"variant_id": int(variant_id)}
 
 
-def is_recent_publish_conflict(
+def _publish_conflict(
     conn: Any,
     *,
     variant_id: int,
-    guard_count: int = RECENT_PUBLISH_GUARD_COUNT,
+    guard_count: int | None,
 ) -> dict[str, Any] | None:
     query = """
         WITH candidate AS (
@@ -84,6 +84,7 @@ def is_recent_publish_conflict(
                 ph.id AS publish_id,
                 ph.variant_id,
                 ph.published_title,
+                ph.naver_url,
                 ph.published_at,
                 tv.title AS variant_title,
                 tv.slug AS variant_slug,
@@ -101,18 +102,21 @@ def is_recent_publish_conflict(
             rp.publish_id,
             rp.variant_id,
             rp.published_title,
+            rp.naver_url,
             rp.published_at,
             CASE
+                WHEN rp.variant_id = c.variant_id THEN 'variant'
                 WHEN rp.cluster_id = c.cluster_id OR rp.semantic_key = c.semantic_key THEN 'topic'
                 WHEN rp.variant_title = c.variant_title OR rp.variant_slug = c.variant_slug THEN 'title'
                 ELSE 'unknown'
             END AS conflict_reason
         FROM candidate c
         JOIN recent_published rp
-          ON rp.rn <= ?
+          ON (? IS NULL OR rp.rn <= ?)
          AND rp.domain = c.domain
          AND (
-              rp.cluster_id = c.cluster_id
+              rp.variant_id = c.variant_id
+              OR rp.cluster_id = c.cluster_id
               OR rp.semantic_key = c.semantic_key
               OR rp.variant_title = c.variant_title
               OR rp.variant_slug = c.variant_slug
@@ -120,8 +124,27 @@ def is_recent_publish_conflict(
         ORDER BY rp.publish_id DESC
         LIMIT 1
     """
-    row = fetch_one(conn, query, (variant_id, guard_count))
+    row = fetch_one(conn, query, (variant_id, guard_count, guard_count))
     return dict(row) if row else None
+
+
+def is_recent_publish_conflict(
+    conn: Any,
+    *,
+    variant_id: int,
+    guard_count: int = RECENT_PUBLISH_GUARD_COUNT,
+) -> dict[str, Any] | None:
+    return _publish_conflict(conn, variant_id=variant_id, guard_count=guard_count)
+
+
+def is_publish_conflict(conn: Any, *, variant_id: int) -> dict[str, Any] | None:
+    """Return any existing naver_blog publish conflict for this variant.
+
+    This is intentionally stronger than the recent diversity guard. The CLI uses
+    it immediately before opening an external Naver publish session, where a
+    duplicate would be visible to readers and cannot be rolled back safely.
+    """
+    return _publish_conflict(conn, variant_id=variant_id, guard_count=None)
 
 def _published_topic_blocks(conn: Any, *, domain: str) -> dict[str, set[Any]]:
     rows = fetch_all(

@@ -878,6 +878,63 @@ def mark_published(db_path: str | Path, variant_id: int, url: str, *, published_
         row = fetch_one(conn, "SELECT title FROM topic_variant WHERE id = ?", (variant_id,))
         if not row:
             raise ValueError(f"variant_id={variant_id} 를 찾지 못했습니다.")
+
+        existing_publish = fetch_one(
+            conn,
+            """
+            SELECT id, bundle_id, draft_id, published_title, naver_url
+            FROM publish_history
+            WHERE variant_id = ? AND channel = 'naver_blog'
+            ORDER BY COALESCE(published_at, created_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (variant_id,),
+        )
+        if existing_publish:
+            # Idempotency guard: if an external publish retry reports the same
+            # variant again, do not create another history row or increment
+            # use_count. Keep state repaired as published, then return.
+            bundle_id = existing_publish["bundle_id"]
+            draft_id = existing_publish["draft_id"]
+            stored_url = existing_publish["naver_url"] or url
+            conn.execute(
+                """
+                UPDATE topic_variant
+                SET status = 'published', last_used_at = COALESCE(last_used_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (variant_id,),
+            )
+            if draft_id is not None:
+                conn.execute(
+                    """
+                    UPDATE article_draft
+                    SET status = 'published', naver_url = COALESCE(naver_url, ?),
+                        published_at = COALESCE(published_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (stored_url, draft_id),
+                )
+            if bundle_id is not None:
+                conn.execute(
+                    "UPDATE article_bundle SET bundle_status = 'published', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (bundle_id,),
+                )
+            conn.execute(
+                """
+                UPDATE curriculum_node
+                SET status = 'published', published_at = COALESCE(published_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+                WHERE id IN (
+                    SELECT node_id FROM curriculum_node_variant WHERE variant_id = ?
+                )
+                """,
+                (variant_id,),
+            )
+            from .curriculum import refresh_curriculum_hub_posts_for_variant_in_conn
+
+            refresh_curriculum_hub_posts_for_variant_in_conn(conn, variant_id=variant_id)
+            return
+
         draft = fetch_one(
             conn,
             "SELECT id, title, bundle_id FROM article_draft WHERE variant_id = ? ORDER BY id DESC LIMIT 1",
