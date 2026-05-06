@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import sqlite3
 import sys
 import tempfile
@@ -280,7 +281,10 @@ class LongtailPlannerTest(unittest.TestCase):
         seed_az_curriculum(self.db_path)
         hub = refresh_curriculum_hub_post(self.db_path)
         self.assertEqual(hub["linked_node_count"], 0)
-        self.assertIn("1. 지금 집을 사야 할까, 청약을 기다려야 할까 (발행 예정)", hub["body_markdown"])
+        self.assertIn("제01장. 지금 집을 사야 할까, 청약을 기다려야 할까\n상태: 발행 예정", hub["body_markdown"])
+        self.assertNotIn("1. 지금 집을 사야 할까", hub["body_markdown"])
+        self.assertNotIn("   - 청약·분양", hub["body_markdown"])
+        self.assertFalse(any(re.match(r"^\d+\.\s", line) for line in hub["body_markdown"].splitlines()))
 
         first = list_curriculum_plan(self.db_path, limit=1)[0]
         set_curriculum_hub_url(self.db_path, "https://blog.naver.com/example/az-hub", synced=True)
@@ -296,7 +300,10 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(changed_hub["linked_node_count"], 1)
         self.assertEqual(changed_hub["needs_sync"], 1)
         self.assertNotIn("<a href=", changed_hub["body_markdown"])
-        self.assertIn("1. 지금 집을 사야 할까, 청약을 기다려야 할까\nhttps://blog.naver.com/example/az-1", changed_hub["body_markdown"])
+        self.assertIn("제01장. 지금 집을 사야 할까, 청약을 기다려야 할까\n링크: https://blog.naver.com/example/az-1", changed_hub["body_markdown"])
+        self.assertNotIn("\nhttps://blog.naver.com/example/az-1", changed_hub["body_markdown"])
+        self.assertNotIn("   - 청약·분양", changed_hub["body_markdown"])
+        self.assertFalse(any(re.match(r"^\d+\.\s", line) for line in changed_hub["body_markdown"].splitlines()))
 
     def test_load_bundle_article_adds_curriculum_hub_related_link_only(self) -> None:
         seed_az_curriculum(self.db_path)

@@ -468,12 +468,13 @@ def render_curriculum_hub_markdown(*, track: dict[str, Any], rows: list[dict[str
         chapter_title = str(row["chapter_title"])
         domain_label = DOMAIN_LABELS.get(str(row.get("domain") or DEFAULT_DOMAIN), str(row.get("domain") or ""))
         url = str(row.get("naver_url") or "").strip()
+        lines.append(f"제{chapter_no:02d}장. {chapter_title}")
         if url:
-            lines.append(f"{chapter_no}. {chapter_title}")
-            lines.append(_canonical_naver_blog_url(url))
+            lines.append(f"링크: {_canonical_naver_blog_url(url)}")
         else:
-            lines.append(f"{chapter_no}. {chapter_title} (발행 예정)")
-        lines.append(f"   - {domain_label} · {row.get('primary_keyword') or ''}".rstrip())
+            lines.append("상태: 발행 예정")
+        lines.append(f"분야: {domain_label} / 키워드: {row.get('primary_keyword') or ''}".rstrip())
+        lines.append("")
     lines.extend(
         [
             "",
