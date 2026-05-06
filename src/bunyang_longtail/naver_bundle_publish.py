@@ -2546,7 +2546,10 @@ def _append_book_and_related_blocks(lines: list[str], *, related_links: list[dic
         lines.append("")
         lines.append("관련 글")
         for item in cleaned_related:
-            lines.append(f"{item['category_name']} 최신 글")
+            if item["category_name"] == "전체 목차":
+                lines.append("전체 목차 보기")
+            else:
+                lines.append(f"{item['category_name']} 최신 글")
             lines.append(item["title"])
             lines.append(item["url"])
             lines.append("")
@@ -2885,6 +2888,21 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
     ).fetchone()
     if not draft:
         raise ValueError(f"draft_id={bundle['primary_draft_id']} 를 찾지 못했습니다.")
+    hub_row = conn.execute(
+        """
+        SELECT chp.title, chp.naver_url
+        FROM curriculum_node_variant cnv
+        JOIN curriculum_node cn ON cn.id = cnv.node_id
+        JOIN curriculum_hub_post chp ON chp.track_id = cn.track_id
+        WHERE cnv.variant_id = ?
+          AND chp.status = 'published'
+          AND chp.naver_url IS NOT NULL
+          AND chp.naver_url != ''
+        ORDER BY chp.id ASC
+        LIMIT 1
+        """,
+        (bundle["variant_id"],),
+    ).fetchone()
     related_rows = conn.execute(
         """
         SELECT published_title, naver_url, tc.domain
@@ -2900,7 +2918,16 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
         """,
         (bundle_id, bundle["domain"]),
     ).fetchall()
-    related_links = [
+    related_links = []
+    if hub_row and hub_row["naver_url"]:
+        related_links.append(
+            {
+                "category_name": "전체 목차",
+                "title": hub_row["title"],
+                "url": hub_row["naver_url"],
+            }
+        )
+    related_links.extend(
         {
             "category_name": _related_category_label(row["domain"]),
             "title": row["published_title"],
@@ -2908,7 +2935,7 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
         }
         for row in related_rows
         if row["naver_url"]
-    ]
+    )
     return {
         "bundle_id": bundle["id"],
         "variant_id": bundle["variant_id"],

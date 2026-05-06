@@ -262,6 +262,49 @@ def select_publish_candidate(
 
     diversity_blocks = _recent_diversity_blocks(conn, domain=domain)
 
+    curriculum_query = """
+        SELECT
+            tv.id,
+            tv.title,
+            tv.slug,
+            tv.status,
+            tv.use_count,
+            tv.angle,
+            tc.priority,
+            tc.id AS cluster_id,
+            tc.domain,
+            tc.semantic_key,
+            tc.family,
+            tc.primary_keyword,
+            tc.secondary_keyword,
+            tc.search_intent,
+            tc.scenario,
+            cn.chapter_no AS curriculum_chapter_no,
+            cn.node_key AS curriculum_node_key,
+            cn.title AS curriculum_title,
+            ct.track_key AS curriculum_track_key
+        FROM curriculum_node cn
+        JOIN curriculum_track ct ON ct.id = cn.track_id
+        JOIN curriculum_node_variant cnv ON cnv.node_id = cn.id AND cnv.variant_role = 'primary'
+        JOIN topic_variant tv ON tv.id = cnv.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE ct.status = 'active'
+          AND cn.status IN ('queued', 'active')
+          AND tc.domain = ?
+          AND tv.status IN ('queued', 'drafted')
+        ORDER BY cn.chapter_no ASC, tv.id ASC
+    """
+    curriculum_rows = []
+    for candidate in fetch_all(conn, curriculum_query, (domain,)):
+        row = dict(candidate)
+        if int(row["id"]) in excluded_ids:
+            continue
+        if _is_blocked_by_published_topic(row, published_blocks):
+            continue
+        curriculum_rows.append(row)
+    if curriculum_rows:
+        return curriculum_rows[0]
+
     recovery_query = """
         SELECT
             tv.id,

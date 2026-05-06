@@ -926,6 +926,16 @@ def mark_published(db_path: str | Path, variant_id: int, url: str, *, published_
             )
         conn.execute(
             """
+            UPDATE curriculum_node
+            SET status = 'published', published_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id IN (
+                SELECT node_id FROM curriculum_node_variant WHERE variant_id = ?
+            )
+            """,
+            (variant_id,),
+        )
+        conn.execute(
+            """
             INSERT INTO publish_history (
                 bundle_id, variant_id, draft_id, channel, target_account, publish_mode,
                 published_title, naver_url, published_at, result_json
@@ -933,6 +943,9 @@ def mark_published(db_path: str | Path, variant_id: int, url: str, *, published_
             """,
             (bundle_id, variant_id, draft_id, published_title, url, json.dumps({"url": url}, ensure_ascii=False)),
         )
+        from .curriculum import refresh_curriculum_hub_posts_for_variant_in_conn
+
+        refresh_curriculum_hub_posts_for_variant_in_conn(conn, variant_id=variant_id)
 
 
 def stats(db_path: str | Path, *, domain: str | None = DEFAULT_DOMAIN) -> dict[str, Any]:

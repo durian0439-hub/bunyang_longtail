@@ -3,7 +3,7 @@
 작성일: 2026-04-20
 상태: 설계 기준 문서
 
-이 문서는 bunyang_longtail의 **DB 스키마 v2, GPT 웹 워커 구조, 상태머신, 중복 방지 규칙**을 고정하기 위한 설계 문서입니다.
+이 문서는 bunyang_longtail의 **DB 스키마 v2, A-Z 커리큘럼 spine, GPT 웹 워커 구조, 상태머신, 중복 방지 규칙**을 고정하기 위한 설계 문서입니다.
 
 ---
 
@@ -11,10 +11,11 @@
 
 이 시스템의 목표는 아래 4가지를 동시에 만족하는 것입니다.
 
-1. 청약 롱테일 주제를 DB 자산으로 장기 관리한다.
-2. 같은 의미의 주제를 다른 검색의도와 다른 서술각도로 지속 변형한다.
-3. 글 생성과 이미지 생성은 **GPT 웹 경로를 우선 사용**하여 현재 요금제를 최대한 활용한다.
-4. 발행 결과는 중복 없이 누적되고, 성과에 따라 다음 주제 선택과 변형 전략이 개선된다.
+1. 책 한 권처럼 읽히는 `부동산 실전 A-Z` 고정 목차를 DB 자산으로 장기 관리한다.
+2. 청약 롱테일 주제는 A-Z 본문을 보조하는 branch로 유지한다.
+3. 같은 의미의 주제를 다른 검색의도와 다른 서술각도로 지속 변형한다.
+4. 글 생성과 이미지 생성은 **GPT 웹 경로를 우선 사용**하여 현재 요금제를 최대한 활용한다.
+5. 발행 결과는 중복 없이 누적되고, 성과에 따라 다음 주제 선택과 변형 전략이 개선된다.
 
 ---
 
@@ -22,20 +23,25 @@
 
 고정 순서:
 
-1. Topic Catalog
-2. Cluster Generator
-3. Variant Generator
-4. Prompt Package Builder
-5. Article Bundle Orchestrator
-6. GPT Web Draft Worker
-7. GPT Web Image Worker
-8. Similarity / Policy Guard
-9. Review Queue
-10. Publish Queue
-11. Publish History
-12. Performance Feedback
+1. Curriculum Track / Node Seed
+2. Curriculum Hub Post Render
+3. Topic Catalog
+4. Cluster Generator
+5. Variant Generator
+6. Prompt Package Builder
+7. Article Bundle Orchestrator
+8. GPT Web Draft Worker
+9. GPT Web Image Worker
+10. Similarity / Policy Guard
+11. Review Queue
+12. Publish Queue
+13. Publish History
+14. Performance Feedback
 
 설명:
+- Curriculum Track은 책 한 권 단위 발행 spine이다.
+- Curriculum Node는 챕터 1개 단위 고정 목차다.
+- Curriculum Hub Post는 전체 목차 공지글/고정글 본문을 관리한다.
 - Cluster는 의미 단위다.
 - Variant는 표현 단위다.
 - Article Bundle은 **글 1개와 그 글에 종속된 이미지 세트**를 묶는 실행 단위다.
@@ -49,7 +55,117 @@
 
 ## 3. 엔터티 정의
 
-## 3.1 topic_cluster
+## 3.1 curriculum_track
+
+역할:
+- A-Z 책 목차형 발행 트랙의 최상위 단위
+- 기본 트랙은 `real-estate-a-z` / `부동산 실전 A-Z`
+- 운영 전략은 `A-Z spine 70~80% + longtail branch 20~30%`를 기본값으로 둔다.
+
+### 필수 컬럼
+- `id`
+- `track_key` unique
+- `title`
+- `description`
+- `strategy_json`
+- `target_ratio`
+- `status`
+- `created_at`
+- `updated_at`
+
+---
+
+## 3.2 curriculum_node
+
+역할:
+- 책의 챕터 1개에 해당하는 고정 발행 단위
+- 기본 seed는 65개 챕터이며, 청약·분양·대출·세금·경매를 하나의 실전 목차로 묶는다.
+- `chapter_no` 순서가 발행 우선순위다.
+
+### 필수 컬럼
+- `id`
+- `track_id` FK
+- `node_key` unique
+- `chapter_no`
+- `part_no`
+- `part_title`
+- `title`
+- `domain`
+- `family`
+- `primary_keyword`
+- `secondary_keyword`
+- `audience`
+- `search_intent`
+- `scenario`
+- `comparison_keyword`
+- `angle`
+- `required`
+- `priority`
+- `status`
+- `outline_json`
+- `policy_json`
+- `published_at`
+- `created_at`
+- `updated_at`
+
+### 상태
+- `queued`
+- `active`
+- `published`
+- `blocked`
+- `archived`
+
+---
+
+## 3.3 curriculum_node_variant
+
+역할:
+- `curriculum_node`와 실제 발행 후보인 `topic_variant`를 연결한다.
+- 기본 역할은 `primary`이며, 필요 시 후속 보강글은 `branch` 역할로 확장할 수 있다.
+
+### 필수 컬럼
+- `id`
+- `node_id` FK
+- `variant_id` FK
+- `variant_role`
+- `created_at`
+
+---
+
+## 3.4 curriculum_hub_post
+
+역할:
+- A-Z 전체 목차 전용 허브글을 DB에서 관리한다.
+- 발행된 챕터는 링크로, 미발행 챕터는 `발행 예정`으로 렌더링한다.
+- 네이버 공지글 또는 고정글로 운영하고, 개별 글에는 전체 목차를 길게 붙이지 않고 허브글 링크만 연결한다.
+- 새 A-Z 글이 발행되면 허브 본문을 다시 렌더링하고 `needs_sync=1`로 표시한다.
+
+### 필수 컬럼
+- `id`
+- `track_id` FK
+- `hub_key` unique
+- `title`
+- `naver_url`
+- `status`
+- `body_markdown`
+- `body_hash`
+- `linked_node_count`
+- `total_node_count`
+- `needs_sync`
+- `pinned`
+- `last_rendered_at`
+- `last_synced_at`
+- `created_at`
+- `updated_at`
+
+### 상태
+- `draft`
+- `published`
+- `archived`
+
+---
+
+## 3.5 topic_cluster
 
 역할:
 - 같은 의미의 주제를 묶는 최상위 단위
@@ -78,7 +194,7 @@
 
 ---
 
-## 3.2 topic_variant
+## 3.6 topic_variant
 
 역할:
 - 같은 의미를 다른 제목/각도/훅으로 푼 발행 후보
@@ -120,7 +236,7 @@
 
 ---
 
-## 3.3 article_bundle
+## 3.7 article_bundle
 
 역할:
 - 글 1개 기준으로 본문과 이미지 생성을 묶는 상위 실행 단위
@@ -152,7 +268,7 @@
 
 ---
 
-## 3.4 generation_job
+## 3.8 generation_job
 
 역할:
 - GPT 웹 워커 실행 이력 저장
@@ -191,7 +307,7 @@
 
 ---
 
-## 3.5 article_draft
+## 3.9 article_draft
 
 역할:
 - 실제 글 초안 저장
@@ -225,7 +341,7 @@
 
 ---
 
-## 3.6 image_asset
+## 3.10 image_asset
 
 역할:
 - GPT 웹 이미지 생성 결과 저장
@@ -254,7 +370,7 @@
 
 ---
 
-## 3.7 publish_history
+## 3.11 publish_history
 
 역할:
 - 실제 발행 결과 저장
@@ -274,7 +390,7 @@
 
 ---
 
-## 3.8 similarity_index
+## 3.12 similarity_index
 
 역할:
 - 제목/본문/의미 유사도 검사용 인덱스 저장
@@ -290,7 +406,7 @@
 
 ---
 
-## 3.9 performance_feedback
+## 3.13 performance_feedback
 
 역할:
 - 발행 성과를 다음 주제 선택과 변형 전략에 반영
@@ -417,6 +533,24 @@ GPT 웹 생성 결과는 아래를 반드시 남긴다.
 - normalized title exact match: 차단
 - content hash exact match: 차단
 - embedding similarity >= 0.88: 검토 또는 차단
+
+---
+
+## 6.4 발행 후보 선택 순서
+
+기본 선택 순서:
+1. 미완성 복구 후보: 초안은 있는데 이미지가 비어 있는 bundle
+2. A-Z curriculum 후보: 해당 도메인의 가장 앞선 미발행 `chapter_no`
+3. Longtail branch 후보: 기존 `topic_variant` 대기열 중 다양성/가중치 기준 후보
+
+규칙:
+- A-Z 후보는 책 목차 순서를 유지하기 위해 `chapter_no` 오름차순으로 선택한다.
+- 이미 발행된 cluster/semantic_key/title/slug는 기존 중복 가드로 차단한다.
+- A-Z 후보가 없을 때만 기존 무한 롱테일 branch를 사용한다.
+- `mark_published`는 `topic_variant`뿐 아니라 연결된 `curriculum_node`도 `published`로 함께 갱신한다.
+- 발행 URL이 생기면 `curriculum_hub_post.body_markdown`을 다시 렌더링하고 `needs_sync=1`로 표시한다.
+- `publish-curriculum-hub`는 저장된 목차글 URL이 있으면 네이버 수정 URL로 기존 글을 갱신하고, 없으면 새 목차글을 발행한다.
+- 개별 글에는 전체 목차를 길게 삽입하지 않고, 목차 허브글 URL이 있을 때 `전체 목차 보기` 링크만 관련 글 영역에 넣는다.
 
 ---
 

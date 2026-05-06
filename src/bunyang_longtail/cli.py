@@ -7,6 +7,15 @@ from pprint import pprint
 
 from .catalog import DEFAULT_DOMAIN, SUPPORTED_DOMAINS
 from .config import DEFAULT_DB_PATH, DEFAULT_EXPORT_PATH, ensure_data_dir
+from .curriculum import (
+    CURRICULUM_TRACK_KEY,
+    curriculum_stats,
+    list_curriculum_plan,
+    mark_curriculum_hub_synced,
+    refresh_curriculum_hub_post,
+    seed_az_curriculum,
+    set_curriculum_hub_url,
+)
 from .database import init_db, migrate_db
 from .gpt_web import GptWebExecutionError, probe_gpt_web
 from .openai_compat import OpenAICompatExecutionError, probe_openai_compat
@@ -32,6 +41,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init-db", help="DB 초기화")
     subparsers.add_parser("migrate-v2", help="v2 스키마 마이그레이션")
+
+    seed_curriculum_parser = subparsers.add_parser("seed-curriculum", help="A-Z 고정 커리큘럼 spine을 DB에 생성/갱신")
+    seed_curriculum_parser.add_argument("--track", default=CURRICULUM_TRACK_KEY)
+
+    curriculum_plan_parser = subparsers.add_parser("curriculum-plan", help="A-Z 커리큘럼 발행 계획 조회")
+    curriculum_plan_parser.add_argument("--track", default=CURRICULUM_TRACK_KEY)
+    curriculum_plan_parser.add_argument("--limit", type=int)
+
+    curriculum_stats_parser = subparsers.add_parser("curriculum-stats", help="A-Z 커리큘럼 진행률 통계")
+    curriculum_stats_parser.add_argument("--track", default=CURRICULUM_TRACK_KEY)
+
+    hub_parser = subparsers.add_parser("render-curriculum-hub", help="A-Z 전체 목차 허브글 마크다운 렌더링/갱신")
+    hub_parser.add_argument("--track", default=CURRICULUM_TRACK_KEY)
+    hub_parser.add_argument("--output", help="렌더링한 목차 마크다운 저장 경로")
+
+    hub_url_parser = subparsers.add_parser("set-curriculum-hub-url", help="네이버에 발행한 목차 허브글 URL 저장")
+    hub_url_parser.add_argument("--track", default=CURRICULUM_TRACK_KEY)
+    hub_url_parser.add_argument("--url", required=True)
+    hub_url_parser.add_argument("--unsynced", action="store_true", help="URL만 저장하고 네이버 본문 동기화 필요 상태로 둠")
+
+    hub_synced_parser = subparsers.add_parser("mark-curriculum-hub-synced", help="목차 허브글 네이버 반영 완료 표시")
+    hub_synced_parser.add_argument("--track", default=CURRICULUM_TRACK_KEY)
+
+    hub_publish_parser = subparsers.add_parser("publish-curriculum-hub", help="A-Z 목차 허브글을 네이버에 신규 발행 또는 기존 글 수정")
+    hub_publish_parser.add_argument("--track", default=CURRICULUM_TRACK_KEY)
+    hub_publish_parser.add_argument("--mode", choices=["draft", "private", "publish"], default="private")
+    hub_publish_parser.add_argument("--output-root")
+    hub_publish_parser.add_argument("--category-no")
+    hub_publish_parser.add_argument("--category-name", default="How To 분양")
+    hub_publish_parser.add_argument("--force-new", action="store_true", help="저장된 URL이 있어도 새 글로 발행")
 
     replenish_parser = subparsers.add_parser("replenish", help="대기열 보충")
     replenish_parser.add_argument("--min-queued", type=int, default=500)
@@ -180,6 +219,63 @@ def main(argv: list[str] | None = None) -> int:
         migrate_db(args.db)
         print(f"DB 마이그레이션 완료: {args.db}")
         return 0
+
+    if args.command == "seed-curriculum":
+        result = seed_az_curriculum(args.db, track_key=args.track)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "curriculum-plan":
+        rows = list_curriculum_plan(args.db, track_key=args.track, limit=args.limit)
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "curriculum-stats":
+        result = curriculum_stats(args.db, track_key=args.track)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "render-curriculum-hub":
+        result = refresh_curriculum_hub_post(args.db, track_key=args.track)
+        body = str(result.get("body_markdown") or "")
+        if args.output:
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(body, encoding="utf-8")
+            payload = {key: value for key, value in result.items() if key != "body_markdown"}
+            payload["output"] = str(output)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(body, end="")
+        return 0
+
+    if args.command == "set-curriculum-hub-url":
+        result = set_curriculum_hub_url(args.db, args.url, track_key=args.track, synced=not args.unsynced)
+        print(json.dumps({key: value for key, value in result.items() if key != "body_markdown"}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "mark-curriculum-hub-synced":
+        result = mark_curriculum_hub_synced(args.db, track_key=args.track)
+        print(json.dumps({key: value for key, value in result.items() if key != "body_markdown"}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "publish-curriculum-hub":
+        from datetime import datetime
+
+        from .curriculum_hub_publish import publish_curriculum_hub_to_naver
+
+        output_root = args.output_root or str(Path("data/naver_publish") / f"curriculum_hub_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        result = publish_curriculum_hub_to_naver(
+            db_path=args.db,
+            output_root=output_root,
+            track_key=args.track,
+            mode=args.mode,
+            category_no=args.category_no,
+            category_name=args.category_name,
+            force_new=args.force_new,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
 
     if args.command == "replenish":
         result = replenish_queue(args.db, min_queued=args.min_queued, variants_per_cluster=args.variants_per_cluster, domain=args.domain)

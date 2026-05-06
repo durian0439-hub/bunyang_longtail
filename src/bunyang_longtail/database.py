@@ -155,6 +155,76 @@ CREATE TABLE IF NOT EXISTS performance_feedback (
     note TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS curriculum_track (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_key TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    strategy_json TEXT NOT NULL DEFAULT '{}',
+    target_ratio REAL NOT NULL DEFAULT 0.75,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS curriculum_node (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL REFERENCES curriculum_track(id) ON DELETE CASCADE,
+    node_key TEXT NOT NULL UNIQUE,
+    chapter_no INTEGER NOT NULL,
+    part_no INTEGER NOT NULL,
+    part_title TEXT NOT NULL,
+    title TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT 'cheongyak',
+    family TEXT NOT NULL,
+    primary_keyword TEXT NOT NULL,
+    secondary_keyword TEXT NOT NULL,
+    audience TEXT NOT NULL,
+    search_intent TEXT NOT NULL,
+    scenario TEXT NOT NULL,
+    comparison_keyword TEXT,
+    angle TEXT NOT NULL DEFAULT '판단형',
+    required INTEGER NOT NULL DEFAULT 1,
+    priority INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'queued',
+    outline_json TEXT NOT NULL,
+    policy_json TEXT NOT NULL DEFAULT '{}',
+    published_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(track_id, chapter_no)
+);
+
+CREATE TABLE IF NOT EXISTS curriculum_node_variant (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL REFERENCES curriculum_node(id) ON DELETE CASCADE,
+    variant_id INTEGER NOT NULL REFERENCES topic_variant(id) ON DELETE CASCADE,
+    variant_role TEXT NOT NULL DEFAULT 'primary',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(node_id, variant_id),
+    UNIQUE(node_id, variant_role)
+);
+
+CREATE TABLE IF NOT EXISTS curriculum_hub_post (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL REFERENCES curriculum_track(id) ON DELETE CASCADE,
+    hub_key TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    naver_url TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    body_markdown TEXT NOT NULL DEFAULT '',
+    body_hash TEXT,
+    linked_node_count INTEGER NOT NULL DEFAULT 0,
+    total_node_count INTEGER NOT NULL DEFAULT 0,
+    needs_sync INTEGER NOT NULL DEFAULT 1,
+    pinned INTEGER NOT NULL DEFAULT 1,
+    last_rendered_at TEXT,
+    last_synced_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(track_id)
+);
 """
 
 INDEXES_SQL = """
@@ -177,6 +247,12 @@ CREATE INDEX IF NOT EXISTS idx_image_variant ON image_asset(variant_id);
 CREATE INDEX IF NOT EXISTS idx_publish_bundle ON publish_history(bundle_id);
 CREATE INDEX IF NOT EXISTS idx_publish_variant ON publish_history(variant_id);
 CREATE INDEX IF NOT EXISTS idx_similarity_semantic ON similarity_index(semantic_key);
+CREATE INDEX IF NOT EXISTS idx_curriculum_track_status ON curriculum_track(status);
+CREATE INDEX IF NOT EXISTS idx_curriculum_node_track_order ON curriculum_node(track_id, chapter_no);
+CREATE INDEX IF NOT EXISTS idx_curriculum_node_domain_status ON curriculum_node(domain, status);
+CREATE INDEX IF NOT EXISTS idx_curriculum_node_variant_variant ON curriculum_node_variant(variant_id);
+CREATE INDEX IF NOT EXISTS idx_curriculum_hub_track ON curriculum_hub_post(track_id);
+CREATE INDEX IF NOT EXISTS idx_curriculum_hub_status ON curriculum_hub_post(status, needs_sync);
 """
 
 
@@ -314,6 +390,61 @@ def migrate_db(db_path: str | Path) -> None:
             "bundle_id",
             "INTEGER REFERENCES article_bundle(id) ON DELETE CASCADE",
         )
+
+        _ensure_column(
+            conn,
+            "curriculum_track",
+            "target_ratio",
+            "REAL DEFAULT 0.75",
+            backfill_sql="UPDATE curriculum_track SET target_ratio = 0.75 WHERE target_ratio IS NULL",
+        )
+        _ensure_column(
+            conn,
+            "curriculum_track",
+            "updated_at",
+            "TEXT",
+            backfill_sql="UPDATE curriculum_track SET updated_at = created_at WHERE updated_at IS NULL",
+        )
+        _ensure_column(conn, "curriculum_node", "angle", "TEXT DEFAULT '판단형'")
+        _ensure_column(conn, "curriculum_node", "published_at", "TEXT")
+        _ensure_column(
+            conn,
+            "curriculum_node",
+            "updated_at",
+            "TEXT",
+            backfill_sql="UPDATE curriculum_node SET updated_at = created_at WHERE updated_at IS NULL",
+        )
+        _ensure_column(conn, "curriculum_hub_post", "body_hash", "TEXT")
+        _ensure_column(
+            conn,
+            "curriculum_hub_post",
+            "linked_node_count",
+            "INTEGER DEFAULT 0",
+            backfill_sql="UPDATE curriculum_hub_post SET linked_node_count = 0 WHERE linked_node_count IS NULL",
+        )
+        _ensure_column(
+            conn,
+            "curriculum_hub_post",
+            "total_node_count",
+            "INTEGER DEFAULT 0",
+            backfill_sql="UPDATE curriculum_hub_post SET total_node_count = 0 WHERE total_node_count IS NULL",
+        )
+        _ensure_column(
+            conn,
+            "curriculum_hub_post",
+            "needs_sync",
+            "INTEGER DEFAULT 1",
+            backfill_sql="UPDATE curriculum_hub_post SET needs_sync = 1 WHERE needs_sync IS NULL",
+        )
+        _ensure_column(
+            conn,
+            "curriculum_hub_post",
+            "pinned",
+            "INTEGER DEFAULT 1",
+            backfill_sql="UPDATE curriculum_hub_post SET pinned = 1 WHERE pinned IS NULL",
+        )
+        _ensure_column(conn, "curriculum_hub_post", "last_rendered_at", "TEXT")
+        _ensure_column(conn, "curriculum_hub_post", "last_synced_at", "TEXT")
 
         conn.executescript(INDEXES_SQL)
 

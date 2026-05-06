@@ -6,6 +6,7 @@ import random
 import sqlite3
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -33,6 +34,14 @@ from bunyang_longtail.cron_publish import (
 )
 from bunyang_longtail.prompt_builder import build_prompt_package
 from bunyang_longtail.article_quality import score_article_quality
+from bunyang_longtail.curriculum import (
+    curriculum_stats,
+    get_curriculum_hub_post,
+    list_curriculum_plan,
+    refresh_curriculum_hub_post,
+    seed_az_curriculum,
+    set_curriculum_hub_url,
+)
 from bunyang_longtail.database import connect, init_db, migrate_db
 from bunyang_longtail.gpt_web import (
     GptWebExecutionError,
@@ -53,6 +62,8 @@ from bunyang_longtail.local_image_fallback import _summary_points, _summary_sour
 from bunyang_longtail.humanize_style import detect_ai_tell_findings, summarize_findings
 from bunyang_longtail.openai_compat import OpenAICompatExecutionError, probe_openai_compat
 from bunyang_longtail.planner import _topic_scene, export_prompts, get_prompt, list_variants, mark_published, replenish_queue, stats
+from bunyang_longtail.naver_bundle_publish import load_bundle_article
+from bunyang_longtail.curriculum_hub_publish import publish_curriculum_hub_to_naver
 from bunyang_longtail.workers import (
     complete_image_job,
     complete_text_job,
@@ -106,6 +117,210 @@ class LongtailPlannerTest(unittest.TestCase):
                 row[1] for row in conn.execute("PRAGMA table_info(generation_job)").fetchall()
             }
             self.assertIn("bundle_id", job_columns)
+            self.assertIn("curriculum_track", tables)
+            self.assertIn("curriculum_node", tables)
+            self.assertIn("curriculum_node_variant", tables)
+            self.assertIn("curriculum_hub_post", tables)
+            curriculum_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(curriculum_node)").fetchall()
+            }
+            self.assertIn("chapter_no", curriculum_columns)
+            self.assertIn("part_title", curriculum_columns)
+            self.assertIn("published_at", curriculum_columns)
+            hub_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(curriculum_hub_post)").fetchall()
+            }
+            self.assertIn("body_markdown", hub_columns)
+            self.assertIn("needs_sync", hub_columns)
+            self.assertIn("last_synced_at", hub_columns)
+
+    def test_seed_az_curriculum_creates_book_spine_prompts(self) -> None:
+        result = seed_az_curriculum(self.db_path)
+        self.assertEqual(result["total_nodes"], 65)
+        self.assertEqual(result["nodes"], 65)
+        self.assertEqual(result["variants"], 65)
+        self.assertEqual(result["hub_posts"], 1)
+
+        summary = curriculum_stats(self.db_path)
+        self.assertTrue(summary["exists"])
+        self.assertEqual(summary["nodes"], 65)
+        self.assertEqual(summary["publishable"], 65)
+        self.assertEqual(summary["target_ratio"], 0.75)
+        self.assertEqual(summary["hub_post"]["total_node_count"], 65)
+
+        plan = list_curriculum_plan(self.db_path, limit=3)
+        self.assertEqual([row["chapter_no"] for row in plan], [1, 2, 3])
+        self.assertEqual(plan[0]["chapter_title"], "지금 집을 사야 할까, 청약을 기다려야 할까")
+
+        prompt = get_prompt(self.db_path, variant_id=plan[0]["variant_id"])
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt["prompt_version"], "az_v1")
+        self.assertEqual(prompt["prompt_json"]["user"]["curriculum"]["chapter_no"], 1)
+        self.assertIn("A-Z 다음 장", prompt["prompt_json"]["user"]["curriculum"]["next_chapter_hint"])
+
+    def test_select_publish_candidate_prefers_curriculum_chapter_order(self) -> None:
+        seed_az_curriculum(self.db_path)
+        with connect(self.db_path) as conn:
+            first = select_publish_candidate(conn)
+            second = select_publish_candidate(conn, excluded_variant_ids={first["id"]})
+            loan_first = select_publish_candidate(conn, domain="loan")
+        self.assertEqual(first["curriculum_chapter_no"], 1)
+        self.assertEqual(second["curriculum_chapter_no"], 2)
+        self.assertEqual(loan_first["curriculum_chapter_no"], 29)
+
+    def test_select_publish_candidate_prefers_curriculum_before_recovery_bundle(self) -> None:
+        seed_az_curriculum(self.db_path)
+        with connect(self.db_path) as conn:
+            cluster_id = conn.execute(
+                """
+                INSERT INTO topic_cluster (
+                    semantic_key, family, primary_keyword, secondary_keyword, audience,
+                    search_intent, scenario, comparison_keyword, priority, outline_json, policy_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "recovery-candidate-semantic",
+                    "복구",
+                    "복구 후보",
+                    "이미 작성된 글",
+                    "청약초보",
+                    "조건정리",
+                    "복구 테스트",
+                    "A-Z",
+                    9999,
+                    "[]",
+                    "{}",
+                ),
+            ).lastrowid
+            recovery_variant_id = conn.execute(
+                """
+                INSERT INTO topic_variant (
+                    cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cluster_id,
+                    "recovery-candidate-variant",
+                    "판단형",
+                    "복구 후보가 있어도 A-Z가 먼저 나와야 한다",
+                    "recovery-candidate-variant",
+                    90,
+                    "{}",
+                    "drafted",
+                ),
+            ).lastrowid
+            bundle_id = conn.execute(
+                "INSERT INTO article_bundle (variant_id, bundle_status) VALUES (?, 'queued')",
+                (recovery_variant_id,),
+            ).lastrowid
+            draft_id = conn.execute(
+                """
+                INSERT INTO article_draft (bundle_id, variant_id, title, article_markdown, content_hash)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (bundle_id, recovery_variant_id, "복구 후보", "본문", "recovery-content-hash"),
+            ).lastrowid
+            conn.execute("UPDATE article_bundle SET primary_draft_id = ? WHERE id = ?", (draft_id, bundle_id))
+            candidate = select_publish_candidate(conn)
+        self.assertNotEqual(candidate["id"], recovery_variant_id)
+        self.assertEqual(candidate["curriculum_chapter_no"], 1)
+
+    def test_mark_published_updates_curriculum_node_status(self) -> None:
+        seed_az_curriculum(self.db_path)
+        variant_id = list_curriculum_plan(self.db_path, limit=1)[0]["variant_id"]
+        mark_published(self.db_path, variant_id, "https://blog.naver.com/example/az-1")
+        plan = list_curriculum_plan(self.db_path, limit=1)
+        self.assertEqual(plan[0]["node_status"], "published")
+        self.assertEqual(plan[0]["variant_status"], "published")
+        summary = curriculum_stats(self.db_path)
+        self.assertEqual(summary["published"], 1)
+
+    def test_curriculum_hub_post_renders_links_after_publish(self) -> None:
+        seed_az_curriculum(self.db_path)
+        hub = refresh_curriculum_hub_post(self.db_path)
+        self.assertEqual(hub["linked_node_count"], 0)
+        self.assertIn("1. 지금 집을 사야 할까, 청약을 기다려야 할까 (발행 예정)", hub["body_markdown"])
+
+        first = list_curriculum_plan(self.db_path, limit=1)[0]
+        set_curriculum_hub_url(self.db_path, "https://blog.naver.com/example/az-hub", synced=True)
+        synced_hub = get_curriculum_hub_post(self.db_path)
+        self.assertEqual(synced_hub["needs_sync"], 0)
+
+        mark_published(self.db_path, first["variant_id"], "https://blog.naver.com/example/az-1")
+        changed_hub = get_curriculum_hub_post(self.db_path)
+        self.assertEqual(changed_hub["linked_node_count"], 1)
+        self.assertEqual(changed_hub["needs_sync"], 1)
+        self.assertIn('<a href="https://blog.naver.com/example/az-1">지금 집을 사야 할까, 청약을 기다려야 할까</a>', changed_hub["body_markdown"])
+
+    def test_load_bundle_article_adds_curriculum_hub_related_link_only(self) -> None:
+        seed_az_curriculum(self.db_path)
+        set_curriculum_hub_url(self.db_path, "https://blog.naver.com/example/az-hub", synced=True)
+        variant_id = list_curriculum_plan(self.db_path, limit=1)[0]["variant_id"]
+        queued = queue_text_job(self.db_path, variant_id=variant_id)
+        start_job(self.db_path, queued["job_id"])
+        complete_text_job(
+            self.db_path,
+            job_id=queued["job_id"],
+            article_markdown="# 본문\n\n상단 요약\n\n결론 먼저 씁니다.",
+        )
+        article = load_bundle_article(self.db_path, queued["bundle_id"])
+        self.assertEqual(article["related_links"][0]["category_name"], "전체 목차")
+        self.assertEqual(article["related_links"][0]["url"], "https://blog.naver.com/example/az-hub")
+
+    def test_publish_curriculum_hub_uses_existing_naver_publisher_and_update_url(self) -> None:
+        seed_az_curriculum(self.db_path)
+        calls: list[dict[str, object]] = []
+        fake_src = types.ModuleType("src")
+        fake_publisher = types.ModuleType("src.publisher")
+        fake_naver = types.ModuleType("src.publisher.naver_playwright")
+
+        def fake_publish(apt_id, title, body_html, images, mode="draft", out="outputs/publish", body_markdown=None, tags=None, videos=None, write_url=None, clip_urls=None):
+            calls.append(
+                {
+                    "apt_id": apt_id,
+                    "title": title,
+                    "body_html": body_html,
+                    "images": images,
+                    "mode": mode,
+                    "body_markdown": body_markdown,
+                    "tags": tags,
+                    "write_url": write_url,
+                }
+            )
+            Path(out).mkdir(parents=True, exist_ok=True)
+            result = {
+                "status": "ok",
+                "current_url": "https://blog.naver.com/PostView.naver?blogId=bear0439&logNo=123&categoryNo=16",
+            }
+            (Path(out) / f"{apt_id}.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+            return True
+
+        fake_naver.publish = fake_publish
+        with patch.dict(sys.modules, {"src": fake_src, "src.publisher": fake_publisher, "src.publisher.naver_playwright": fake_naver}):
+            first = publish_curriculum_hub_to_naver(
+                db_path=self.db_path,
+                output_root=Path(self.tmpdir.name) / "hub_publish_1",
+                mode="private",
+            )
+            self.assertTrue(first["ok"])
+            self.assertIsNone(calls[-1]["write_url"])
+            self.assertEqual(calls[-1]["images"], [])
+            self.assertIn("부동산 공부 A-Z 전체 목차", str(calls[-1]["body_markdown"]))
+
+            mark_published(self.db_path, list_curriculum_plan(self.db_path, limit=1)[0]["variant_id"], "https://blog.naver.com/example/az-1")
+            changed_hub = get_curriculum_hub_post(self.db_path)
+            self.assertEqual(changed_hub["needs_sync"], 1)
+
+            second = publish_curriculum_hub_to_naver(
+                db_path=self.db_path,
+                output_root=Path(self.tmpdir.name) / "hub_publish_2",
+                mode="private",
+            )
+            self.assertTrue(second["ok"])
+            self.assertIn("Redirect=Update", str(calls[-1]["write_url"]))
+            self.assertIn("logNo=123", str(calls[-1]["write_url"]))
+        synced_hub = get_curriculum_hub_post(self.db_path)
+        self.assertEqual(synced_hub["needs_sync"], 0)
 
     def test_replenish_generates_unique_variants(self) -> None:
         result = replenish_queue(self.db_path, min_queued=60, variants_per_cluster=3)
