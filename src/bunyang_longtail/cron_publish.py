@@ -249,6 +249,65 @@ def _diversity_filtered_rows(rows: list[dict[str, Any]], blocks: Mapping[str, se
     return rows
 
 
+def select_curriculum_publish_candidate(
+    conn: Any,
+    *,
+    excluded_variant_ids: Collection[int] | None = None,
+) -> Any:
+    """Select the next A-Z curriculum chapter across all domains.
+
+    This is intentionally global chapter order, not per-domain rotation, so a daily
+    curriculum cron writes one book-like chapter at a time.
+    """
+    for supported_domain in SUPPORTED_DOMAINS:
+        cleanup_stale_queued_bundles(conn, domain=supported_domain)
+    excluded_ids = {int(variant_id) for variant_id in (excluded_variant_ids or [])}
+    published_blocks_by_domain: dict[str, Mapping[str, set[str]]] = {}
+    query = """
+        SELECT
+            tv.id,
+            tv.title,
+            tv.slug,
+            tv.status,
+            tv.use_count,
+            tv.angle,
+            tc.priority,
+            tc.id AS cluster_id,
+            tc.domain,
+            tc.semantic_key,
+            tc.family,
+            tc.primary_keyword,
+            tc.secondary_keyword,
+            tc.search_intent,
+            tc.scenario,
+            cn.chapter_no AS curriculum_chapter_no,
+            cn.node_key AS curriculum_node_key,
+            cn.title AS curriculum_title,
+            ct.track_key AS curriculum_track_key
+        FROM curriculum_node cn
+        JOIN curriculum_track ct ON ct.id = cn.track_id
+        JOIN curriculum_node_variant cnv ON cnv.node_id = cn.id AND cnv.variant_role = 'primary'
+        JOIN topic_variant tv ON tv.id = cnv.variant_id
+        JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        WHERE ct.status = 'active'
+          AND cn.status IN ('queued', 'active')
+          AND tv.status IN ('queued', 'drafted')
+        ORDER BY cn.chapter_no ASC, tv.id ASC
+    """
+    for candidate in fetch_all(conn, query):
+        row = dict(candidate)
+        variant_id = int(row["id"])
+        if variant_id in excluded_ids:
+            continue
+        row_domain = _normalize_domain(row.get("domain"))
+        if row_domain not in published_blocks_by_domain:
+            published_blocks_by_domain[row_domain] = _published_topic_blocks(conn, domain=row_domain)
+        if _is_blocked_by_published_topic(row, published_blocks_by_domain[row_domain]):
+            continue
+        return row
+    return None
+
+
 def select_publish_candidate(
     conn: Any,
     *,

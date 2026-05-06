@@ -30,6 +30,7 @@ from bunyang_longtail.cron_publish import (
     describe_unpublishable_run_result,
     is_recent_publish_conflict,
     run_bundle_target_from_candidate,
+    select_curriculum_publish_candidate,
     select_publish_candidate,
 )
 from bunyang_longtail.prompt_builder import build_prompt_package
@@ -224,6 +225,25 @@ class LongtailPlannerTest(unittest.TestCase):
             candidate = select_publish_candidate(conn)
         self.assertNotEqual(candidate["id"], recovery_variant_id)
         self.assertEqual(candidate["curriculum_chapter_no"], 1)
+
+    def test_select_curriculum_publish_candidate_uses_global_chapter_order(self) -> None:
+        seed_az_curriculum(self.db_path)
+        with connect(self.db_path) as conn:
+            first = select_curriculum_publish_candidate(conn)
+        self.assertEqual(first["curriculum_chapter_no"], 1)
+        mark_published(self.db_path, first["id"], "https://blog.naver.com/example/az-1")
+        with connect(self.db_path) as conn:
+            second = select_curriculum_publish_candidate(conn)
+        self.assertEqual(second["curriculum_chapter_no"], 2)
+
+    def test_select_curriculum_publish_candidate_crosses_domain_by_chapter_order(self) -> None:
+        seed_az_curriculum(self.db_path)
+        for row in list_curriculum_plan(self.db_path, limit=28):
+            mark_published(self.db_path, row["variant_id"], f"https://blog.naver.com/example/az-{row['chapter_no']}")
+        with connect(self.db_path) as conn:
+            candidate = select_curriculum_publish_candidate(conn)
+        self.assertEqual(candidate["curriculum_chapter_no"], 29)
+        self.assertEqual(candidate["domain"], "loan")
 
     def test_mark_published_updates_curriculum_node_status(self) -> None:
         seed_az_curriculum(self.db_path)
