@@ -271,6 +271,7 @@ def select_curriculum_publish_candidate(
             tv.status,
             tv.use_count,
             tv.angle,
+            ab.id AS bundle_id,
             tc.priority,
             tc.id AS cluster_id,
             tc.domain,
@@ -289,6 +290,15 @@ def select_curriculum_publish_candidate(
         JOIN curriculum_node_variant cnv ON cnv.node_id = cn.id AND cnv.variant_role = 'primary'
         JOIN topic_variant tv ON tv.id = cnv.variant_id
         JOIN topic_cluster tc ON tc.id = tv.cluster_id
+        LEFT JOIN article_bundle ab ON ab.id = (
+            SELECT ab2.id
+            FROM article_bundle ab2
+            WHERE ab2.variant_id = tv.id
+              AND ab2.primary_draft_id IS NOT NULL
+              AND ab2.bundle_status IN ('queued', 'drafting_text', 'rendering_image', 'bundled', 'reviewed')
+            ORDER BY ab2.id DESC
+            LIMIT 1
+        )
         WHERE ct.status = 'active'
           AND cn.status IN ('queued', 'active')
           AND tv.status IN ('queued', 'drafted')

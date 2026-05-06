@@ -21,7 +21,8 @@ export LONGTAIL_VIDEO_TTS_STRICT="${LONGTAIL_VIDEO_TTS_STRICT:-1}"
 export LONGTAIL_NAVER_CLIP_UPLOAD="${LONGTAIL_NAVER_CLIP_UPLOAD:-1}"
 export LONGTAIL_NAVER_CLIP_VISIBILITY="${LONGTAIL_NAVER_CLIP_VISIBILITY:-public}"
 export LONGTAIL_NAVER_CLIP_THUMBNAIL_FREEZE_SEC="${LONGTAIL_NAVER_CLIP_THUMBNAIL_FREEZE_SEC:-3}"
-export LONGTAIL_YOUTUBE_UPLOAD="${LONGTAIL_YOUTUBE_UPLOAD:-1}"
+# A-Z curriculum 발행은 네이버 본문/클립을 우선하며, YouTube 토큰 만료가 블로그 발행을 막지 않도록 기본 skip 처리한다.
+export LONGTAIL_YOUTUBE_UPLOAD="${LONGTAIL_YOUTUBE_UPLOAD:-0}"
 export LONGTAIL_YOUTUBE_PRIVACY_STATUS="${LONGTAIL_YOUTUBE_PRIVACY_STATUS:-${LONGTAIL_YOUTUBE_PRIVACY:-public}}"
 export LONGTAIL_TIKTOK_UPLOAD="${LONGTAIL_TIKTOK_UPLOAD:-0}"
 export LONGTAIL_TIKTOK_PRIVACY_LEVEL="${LONGTAIL_TIKTOK_PRIVACY_LEVEL:-SELF_ONLY}"
@@ -107,6 +108,8 @@ OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
 MAX_VARIANT_ATTEMPTS = 3
 PUBLISH_RETRY_MAX = max(1, int(os.environ.get('LONGTAIL_PUBLISH_RETRY_MAX', '6') or '6'))
 PUBLISH_RETRY_COOLDOWN_SEC = max(0, int(os.environ.get('LONGTAIL_PUBLISH_RETRY_COOLDOWN_SEC', '180') or '180'))
+PUBLISH_COMMAND_TIMEOUT_SEC = max(60, int(os.environ.get('LONGTAIL_PUBLISH_COMMAND_TIMEOUT_SEC', '2400') or '2400'))
+TEXT_RESPONSE_TIMEOUT_SEC = max(60, int(os.environ.get('LONGTAIL_TEXT_RESPONSE_TIMEOUT_SEC', '600') or '600'))
 PUBLISH_MODE = os.environ.get('LONGTAIL_PUBLISH_MODE', 'publish').strip().lower() or 'publish'
 if PUBLISH_MODE not in {'draft', 'private', 'publish'}:
     raise SystemExit(f"invalid LONGTAIL_PUBLISH_MODE: {PUBLISH_MODE}")
@@ -138,6 +141,12 @@ DOMAIN_CONFIGS = {
     },
 }
 
+RECOVERABLE_BUNDLE_ERROR_CODES = (
+    'CODEX_CLI_',
+    'GPT_WEB_',
+    'OPENAI_COMPAT_',
+)
+
 RECOVERABLE_GPT_IMAGE_MARKERS = (
     'GPT 이미지 생성 실패',
     'GPT_WEB_TIMEOUT',
@@ -151,6 +160,7 @@ RECOVERABLE_GPT_IMAGE_MARKERS = (
     'Playwright 대기 시간이 초과',
     'Page.goto: Timeout',
     'Failed to create a ProcessSingleton',
+    'publish command timed out',
 )
 
 
@@ -160,6 +170,11 @@ def _print_json(payload: dict) -> None:
 
 def _is_recoverable_gpt_image_failure(output: str) -> bool:
     return any(marker in output for marker in RECOVERABLE_GPT_IMAGE_MARKERS)
+
+
+def _is_recoverable_generation_blocker(blocker: dict) -> bool:
+    code = str(blocker.get('first_error_code') or '')
+    return any(code.startswith(prefix) for prefix in RECOVERABLE_BUNDLE_ERROR_CODES)
 
 
 def _reset_gpt_runtime_session(domain: str, bundle_id: int, attempt: int) -> None:
@@ -205,13 +220,29 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
             'max_attempts': PUBLISH_RETRY_MAX,
             'output_root': str(out_dir),
         })
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        stdout = result.stdout or ''
-        stderr = result.stderr or ''
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=PUBLISH_COMMAND_TIMEOUT_SEC,
+            )
+            returncode = result.returncode
+            stdout = result.stdout or ''
+            stderr = result.stderr or ''
+        except subprocess.TimeoutExpired as exc:
+            returncode = 124
+            stdout = exc.stdout or ''
+            stderr = exc.stderr or ''
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode('utf-8', errors='replace')
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode('utf-8', errors='replace')
+            stderr = (stderr + '\n' if stderr else '') + f'publish command timed out after {PUBLISH_COMMAND_TIMEOUT_SEC}s'
         last_output = stdout + ('\n' + stderr if stderr else '')
         if stdout:
             print(stdout)
-        if result.returncode == 0:
+        if returncode == 0:
             return {
                 'status': 'published',
                 'domain': domain,
@@ -227,7 +258,7 @@ def _run_publish_command(*, domain: str, bundle_id: int, category_no: str, categ
             'domain': domain,
             'bundle_id': bundle_id,
             'attempt': publish_attempt,
-            'returncode': result.returncode,
+            'returncode': returncode,
             'recoverable_gpt_image_failure': recoverable,
             'cooldown_seconds': PUBLISH_RETRY_COOLDOWN_SEC if recoverable and publish_attempt < PUBLISH_RETRY_MAX else 0,
         })
@@ -284,6 +315,7 @@ try:
             text_route='codex_cli',
             image_roles=[],
             simulate=False,
+            response_timeout_seconds=TEXT_RESPONSE_TIMEOUT_SEC,
         )
         _print_json(run_result)
         blocker = describe_unpublishable_run_result(run_result)
@@ -294,6 +326,11 @@ try:
                 'domain': domain,
                 **blocker,
             })
+            if _is_recoverable_generation_blocker(blocker):
+                raise RuntimeError(
+                    f"recoverable curriculum generation failure; retry same variant on next slot: "
+                    f"variant_id={variant_id}, code={blocker.get('first_error_code')}"
+                )
             continue
         selected_run_result = run_result
         break

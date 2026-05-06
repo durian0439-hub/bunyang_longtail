@@ -245,6 +245,27 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(candidate["curriculum_chapter_no"], 29)
         self.assertEqual(candidate["domain"], "loan")
 
+    def test_select_curriculum_publish_candidate_resumes_existing_draft_bundle(self) -> None:
+        seed_az_curriculum(self.db_path)
+        first = list_curriculum_plan(self.db_path, limit=1)[0]
+        variant_id = first["variant_id"]
+        text_job = queue_text_job(self.db_path, variant_id=variant_id)
+        start_job(self.db_path, text_job["job_id"])
+        complete_text_job(
+            self.db_path,
+            job_id=text_job["job_id"],
+            article_markdown="# 지금 집을 사야 할까\n\n본문",
+        )
+        with connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE article_bundle SET bundle_status = 'rendering_image' WHERE id = ?",
+                (text_job["bundle_id"],),
+            )
+            candidate = select_curriculum_publish_candidate(conn)
+        self.assertEqual(candidate["id"], variant_id)
+        self.assertEqual(candidate["bundle_id"], text_job["bundle_id"])
+        self.assertEqual(run_bundle_target_from_candidate(candidate), {"bundle_id": text_job["bundle_id"]})
+
     def test_mark_published_updates_curriculum_node_status(self) -> None:
         seed_az_curriculum(self.db_path)
         variant_id = list_curriculum_plan(self.db_path, limit=1)[0]["variant_id"]
@@ -1183,6 +1204,38 @@ class LongtailPlannerTest(unittest.TestCase):
             job = conn.execute("SELECT status, error_code FROM generation_job WHERE id = ?", (image_job["job_id"],)).fetchone()
 
         self.assertEqual(recovered["bundle_status"], "queued")
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error_code"], "STALE_RUNNING_JOB")
+
+    def test_run_bundle_with_bundle_id_cleans_stale_running_jobs_before_resume(self) -> None:
+        replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
+        with connect(self.db_path) as conn:
+            candidate = select_publish_candidate(conn)
+            bundle = _ensure_bundle_in_conn(conn, variant_id=candidate["id"])
+        text_job = queue_text_job(self.db_path, bundle_id=bundle["id"])
+        start_job(self.db_path, text_job["job_id"])
+        complete_text_job(
+            self.db_path,
+            job_id=text_job["job_id"],
+            article_markdown="# 제목\n\n본문",
+        )
+        image_job = queue_image_job(self.db_path, bundle_id=bundle["id"], image_role="thumbnail")
+        start_job(self.db_path, image_job["job_id"])
+        with connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE generation_job SET started_at = datetime('now', '-30 minutes') WHERE id = ?",
+                (image_job["job_id"],),
+            )
+
+        result = run_bundle(
+            self.db_path,
+            bundle_id=bundle["id"],
+            image_roles=[],
+            executor_mode="none",
+        )
+        with connect(self.db_path) as conn:
+            job = conn.execute("SELECT status, error_code FROM generation_job WHERE id = ?", (image_job["job_id"],)).fetchone()
+        self.assertEqual(result["mode"], "already_drafted")
         self.assertEqual(job["status"], "failed")
         self.assertEqual(job["error_code"], "STALE_RUNNING_JOB")
 

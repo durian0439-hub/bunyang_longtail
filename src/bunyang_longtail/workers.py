@@ -854,6 +854,8 @@ def run_bundle(
     if bundle_id is not None:
         with connect(db_path) as conn:
             existing_bundle = _fetch_bundle(conn, bundle_id)
+            _cleanup_stale_bundle_jobs(conn, existing_bundle)
+            existing_bundle = _fetch_bundle(conn, bundle_id)
 
     final_bundle_id = existing_bundle["id"] if existing_bundle else None
     text_job: dict[str, Any] | None = None
