@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -2717,13 +2718,22 @@ def default_tags(title: str, *, domain: str | None = None) -> list[str]:
     return ordered[:NAVER_TAG_LIMIT]
 
 
+def _inline_markdown_links(line: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        label = html.escape(str(match.group(1)), quote=False)
+        href = html.escape(str(match.group(2)), quote=True)
+        return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{label}</a>'
+
+    return re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", repl, str(line or ""))
+
+
 def _emphasize_publish_text(line: str) -> str:
     text = str(line or "").strip()
     if not text or text.startswith("[[IMAGE:"):
         return text
     text = re.sub(r"^(주의|핵심|결론|요약|포인트|체크|질문|답변|예시|정리)(\s*[:：])", r"<strong>\1\2</strong>", text)
     text = re.sub(r"(일반공급 1순위|특별공급|청약통장|예치금|거주요건|무주택|소득과 자산|계약금|중도금|잔금|취득세|체크리스트|FAQ|How To 분양|법원경매|권리분석|말소기준권리|입찰보증금|선순위 임차인|대항력|배당요구|명도|인도명령|유치권|경락잔금대출|How To 경매|부동산 세금|양도세|양도소득세|재산세|종합부동산세|종부세|증여세|상속세|홈택스|위택스|비과세|감면|신고기한|How To 세금)", r"<strong>\1</strong>", text)
-    return text
+    return _inline_markdown_links(text)
 
 
 def _is_faq_question_line(line: str) -> bool:

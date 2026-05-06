@@ -1421,6 +1421,14 @@ Q1. 바로 신청해도 되나요?
         self.assertNotIn("### Q1.", html)
         self.assertNotIn("<p>Q2. 번호형 질문도 크게 보여야 하나요?</p>", html)
 
+    def test_markdown_to_html_renders_markdown_link_as_anchor(self) -> None:
+        html = markdown_to_html(
+            "[제01장. 지금 집을 사야 할까, 청약을 기다려야 할까](https://blog.naver.com/example/az-1)\n"
+        )
+
+        self.assertIn('<a href="https://blog.naver.com/example/az-1" target="_blank" rel="noopener noreferrer">제01장. 지금 집을 사야 할까, 청약을 기다려야 할까</a>', html)
+        self.assertNotIn("](https://blog.naver.com/example/az-1)", html)
+
     def test_inline_markdown_table_is_converted_to_visual_slot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             _, sections = parse_publish_sections(

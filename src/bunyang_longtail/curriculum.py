@@ -470,10 +470,11 @@ def render_curriculum_hub_markdown(*, track: dict[str, Any], rows: list[dict[str
         url = str(row.get("naver_url") or "").strip()
         keyword = str(row.get("primary_keyword") or "").strip()
         meta = f"분야: {domain_label} / 키워드: {keyword}".rstrip()
-        lines.append(f"제{chapter_no:02d}장. {chapter_title}")
         if url:
-            lines.append(f"링크: {_canonical_naver_blog_url(url)} · {meta}")
+            lines.append(f"[제{chapter_no:02d}장. {chapter_title}]({_canonical_naver_blog_url(url)})")
+            lines.append(meta)
         else:
+            lines.append(f"제{chapter_no:02d}장. {chapter_title}")
             lines.append(f"상태: 발행 예정 · {meta}")
         lines.append("")
     lines.extend(
