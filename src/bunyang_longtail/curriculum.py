@@ -450,7 +450,7 @@ def render_curriculum_hub_markdown(*, track: dict[str, Any], rows: list[dict[str
         f"# {title}",
         "",
         "청약, 분양, 대출, 세금, 경매를 처음부터 순서대로 볼 수 있게 정리한 전체 목차입니다.",
-        "발행된 챕터는 제목에 링크를 걸고, 아직 발행 전인 챕터는 발행 예정으로 남겨둡니다.",
+        "발행된 챕터는 링크를 함께 붙이고, 아직 발행 전인 챕터는 발행 예정으로 남겨둡니다.",
         "",
         f"진행률: {linked}/{total}",
         "",
@@ -470,7 +470,9 @@ def render_curriculum_hub_markdown(*, track: dict[str, Any], rows: list[dict[str
         url = str(row.get("naver_url") or "").strip()
         lines.append(f"제{chapter_no:02d}장. {chapter_title}")
         if url:
-            lines.append(f"링크: {_canonical_naver_blog_url(url)}")
+            lines.append("링크")
+            lines.append(_canonical_naver_blog_url(url))
+            lines.append("")
         else:
             lines.append("상태: 발행 예정")
         lines.append(f"분야: {domain_label} / 키워드: {row.get('primary_keyword') or ''}".rstrip())
