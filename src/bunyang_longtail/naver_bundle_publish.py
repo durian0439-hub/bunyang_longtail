@@ -2910,6 +2910,20 @@ def load_bundle_article(db_path: str | Path, bundle_id: int) -> dict[str, Any]:
         """,
         (bundle["variant_id"],),
     ).fetchone()
+    if not hub_row and _content_domain("", str(bundle["domain"] or "")) == "cheongyak":
+        hub_row = conn.execute(
+            """
+            SELECT chp.title, chp.naver_url
+            FROM curriculum_hub_post chp
+            JOIN curriculum_track ct ON ct.id = chp.track_id
+            WHERE ct.track_key = 'real-estate-a-z'
+              AND chp.status = 'published'
+              AND chp.naver_url IS NOT NULL
+              AND chp.naver_url != ''
+            ORDER BY chp.pinned DESC, chp.id ASC
+            LIMIT 1
+            """
+        ).fetchone()
     related_rows = conn.execute(
         """
         SELECT published_title, naver_url, tc.domain

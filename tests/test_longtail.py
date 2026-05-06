@@ -300,8 +300,9 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertEqual(changed_hub["linked_node_count"], 1)
         self.assertEqual(changed_hub["needs_sync"], 1)
         self.assertNotIn("<a href=", changed_hub["body_markdown"])
-        self.assertIn("제01장. 지금 집을 사야 할까, 청약을 기다려야 할까\n링크\nhttps://blog.naver.com/example/az-1\n\n분야:", changed_hub["body_markdown"])
-        self.assertNotIn("링크: https://blog.naver.com/example/az-1", changed_hub["body_markdown"])
+        self.assertIn("제01장. 지금 집을 사야 할까, 청약을 기다려야 할까\n링크: https://blog.naver.com/example/az-1 · 분야: 청약·분양 / 키워드: 내 집 마련", changed_hub["body_markdown"])
+        self.assertNotIn("\nhttps://blog.naver.com/example/az-1", changed_hub["body_markdown"])
+        self.assertNotIn("224276866945분야", changed_hub["body_markdown"])
         self.assertNotIn("   - 청약·분양", changed_hub["body_markdown"])
         self.assertFalse(any(re.match(r"^\d+\.\s", line) for line in changed_hub["body_markdown"].splitlines()))
 

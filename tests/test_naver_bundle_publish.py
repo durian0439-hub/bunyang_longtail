@@ -423,6 +423,71 @@ A. 서류와 현장을 다시 확인해야 합니다.
                 ],
             )
 
+    def test_load_bundle_article_adds_az_hub_link_for_regular_cheongyak_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.sqlite3"
+            init_db(db_path)
+            migrate_db(db_path)
+
+            def add_bundle(conn: sqlite3.Connection, *, domain: str, semantic_key: str, title: str) -> int:
+                conn.execute(
+                    """
+                    INSERT INTO topic_cluster (
+                        domain, semantic_key, family, primary_keyword, secondary_keyword,
+                        audience, search_intent, scenario, priority, outline_json, policy_json
+                    ) VALUES (?, ?, '기초', ?, '', '청약초보', '조건정리', '처음 준비할 때', 10, '{}', '{}')
+                    """,
+                    (domain, semantic_key, title),
+                )
+                cluster_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO topic_variant (
+                        cluster_id, variant_key, angle, title, slug, seo_score, prompt_json, status
+                    ) VALUES (?, ?, '체크리스트형', ?, ?, 80, '{}', 'drafted')
+                    """,
+                    (cluster_id, f"variant-{semantic_key}", title, f"slug-{semantic_key}"),
+                )
+                variant_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute("INSERT INTO article_bundle (variant_id, bundle_status) VALUES (?, 'bundled')", (variant_id,))
+                bundle_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO article_draft (bundle_id, variant_id, title, article_markdown)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (bundle_id, variant_id, title, f"# {title}\n\n본문"),
+                )
+                draft_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute("UPDATE article_bundle SET primary_draft_id = ? WHERE id = ?", (draft_id, bundle_id))
+                return bundle_id
+
+            with sqlite3.connect(db_path) as conn:
+                cheongyak_bundle_id = add_bundle(conn, domain="cheongyak", semantic_key="regular-cheongyak", title="일반 분양 글")
+                auction_bundle_id = add_bundle(conn, domain="auction", semantic_key="regular-auction", title="일반 경매 글")
+                conn.execute(
+                    """
+                    INSERT INTO curriculum_track (track_key, title, description, strategy_json)
+                    VALUES ('real-estate-a-z', '부동산 실전 A-Z', '', '{}')
+                    """
+                )
+                track_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO curriculum_hub_post (
+                        track_id, hub_key, title, naver_url, status, body_markdown, linked_node_count, total_node_count, needs_sync
+                    ) VALUES (?, 'real-estate-a-z-hub', '부동산 공부 A-Z 전체 목차', 'https://blog.naver.com/example/az-hub', 'published', '본문', 1, 65, 0)
+                    """,
+                    (track_id,),
+                )
+
+            cheongyak_article = target.load_bundle_article(db_path, cheongyak_bundle_id)
+            auction_article = target.load_bundle_article(db_path, auction_bundle_id)
+
+            self.assertEqual(cheongyak_article["related_links"][0]["category_name"], "전체 목차")
+            self.assertEqual(cheongyak_article["related_links"][0]["url"], "https://blog.naver.com/example/az-hub")
+            self.assertFalse(any(link["category_name"] == "전체 목차" for link in auction_article["related_links"]))
+
     def test_load_bundle_article_uses_variant_title_not_truncated_draft_title(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.sqlite3"
