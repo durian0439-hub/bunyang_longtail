@@ -816,6 +816,108 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertNotIn("longtail_video_qa_freeze", json.dumps(result, ensure_ascii=False))
         self.assertEqual(seen_publish_kwargs["videos"], [])
 
+    def test_publish_bundle_to_naver_reuses_existing_clip_after_blog_first_retry(self) -> None:
+        fake_src = types.ModuleType("src")
+        fake_publisher = types.ModuleType("src.publisher")
+        fake_naver = types.ModuleType("src.publisher.naver_playwright")
+        seen_publish_kwargs: dict = {}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta_path = Path(tmpdir) / "publish_bundle.json"
+            meta_path.write_text(
+                json.dumps({"bundle_id": 105, "domain": "cheongyak", "title": "세대주 기준", "images": [], "tags": ["청약"]}),
+                encoding="utf-8",
+            )
+            clip_result_path = Path(tmpdir) / "video" / "naver_clip_web" / "result.json"
+            clip_result_path.parent.mkdir(parents=True, exist_ok=True)
+            clip_result_path.write_text(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "naver_clip_upload": {
+                            "status": "private_saved",
+                            "post_publish_review": {"direct_url": "https://tv.naver.com/v/99100169"},
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_publish(apt_id, title, body_html, images, **kwargs):
+                seen_publish_kwargs.update(kwargs)
+                out_dir = Path(kwargs["out"])
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / f"{apt_id}.json").write_text(
+                    json.dumps({"status": "ok", "current_url": "https://blog.naver.com/bear0439/105"}),
+                    encoding="utf-8",
+                )
+                return True
+
+            fake_src.publisher = fake_publisher
+            fake_publisher.naver_playwright = fake_naver
+            fake_naver.publish = fake_publish
+
+            with patch.dict(
+                os.environ,
+                {
+                    "LONGTAIL_BLOG_INLINE_VIDEO": "0",
+                    "LONGTAIL_VIDEO_UPLOAD": "1",
+                    "LONGTAIL_NAVER_CLIP_UPLOAD": "1",
+                },
+            ), patch.dict(
+                sys.modules,
+                {
+                    "src": fake_src,
+                    "src.publisher": fake_publisher,
+                    "src.publisher.naver_playwright": fake_naver,
+                },
+            ), patch.object(
+                target,
+                "load_bundle_article",
+                return_value={
+                    "title": "세대주 세대원 배우자 기준 정리",
+                    "article_markdown": SAMPLE_ARTICLE,
+                    "related_links": [],
+                    "domain": "cheongyak",
+                    "variant_id": 39065,
+                },
+            ), patch.object(
+                target,
+                "build_publish_bundle",
+                return_value=SimpleNamespace(
+                    apt_id="longtail-bundle-105",
+                    title="세대주 세대원 배우자 기준 정리",
+                    body_html="<p>본문</p>",
+                    images=[],
+                    markdown="본문",
+                    tags=["청약"],
+                    meta_path=str(meta_path),
+                    image_provider="gpt_web",
+                    image_provider_requested="gpt_web",
+                    image_provider_fallback_from=None,
+                    image_provider_fallback_reason=None,
+                ),
+            ), patch.object(target, "_persist_publish_result"), patch.object(target, "_persist_video_publish_result"), patch.object(
+                target.subprocess, "run", side_effect=AssertionError("기존 클립 재사용 시 영상/클립 업로드를 다시 실행하면 안 됩니다.")
+            ):
+                result = target.publish_bundle_to_naver(
+                    db_path="test.sqlite3",
+                    bundle_id=105,
+                    output_root=tmpdir,
+                    mode="private",
+                    category_no="16",
+                    category_name="How To 분양",
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["blog_clip_urls"], [])
+        self.assertEqual(seen_publish_kwargs["clip_urls"], [])
+        self.assertEqual(seen_publish_kwargs["videos"], [])
+        self.assertNotIn("[[VIDEO:", seen_publish_kwargs["body_markdown"])
+        self.assertTrue(result["video_publish"]["reused_existing_clip"])
+        self.assertEqual(target._extract_naver_clip_url(result["video_publish"]), "https://tv.naver.com/v/99100169")
+
     def test_insert_video_marker_prefers_after_thumbnail_greeting(self) -> None:
         markdown = "# 제목\n\n[[IMAGE:1]]\n\n첫 인삿말입니다.\n\n## 상단 요약\n\n본문"
         updated = target._insert_video_marker_after_lead_image(markdown, 1)

@@ -3507,12 +3507,16 @@ def publish_bundle_to_naver(
     if pre_blog_video_result is not None:
         result["video_publish"] = pre_blog_video_result
     else:
-        result["video_publish"] = _maybe_publish_longtail_video(
-            publish_bundle=publish_bundle,
-            publish_result=result,
-            category_name=category_name,
-            reuse_existing_video=bool(inline_videos),
-        )
+        existing_video_result = _load_existing_naver_clip_publish_result(publish_bundle) if result.get("ok") else None
+        if existing_video_result is not None:
+            result["video_publish"] = existing_video_result
+        else:
+            result["video_publish"] = _maybe_publish_longtail_video(
+                publish_bundle=publish_bundle,
+                publish_result=result,
+                category_name=category_name,
+                reuse_existing_video=bool(inline_videos),
+            )
     if result.get("ok"):
         _persist_video_publish_result(
             db_path,
