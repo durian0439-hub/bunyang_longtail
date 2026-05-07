@@ -471,7 +471,7 @@ def render_curriculum_hub_markdown(*, track: dict[str, Any], rows: list[dict[str
         keyword = str(row.get("primary_keyword") or "").strip()
         meta = f"분야: {domain_label} / 키워드: {keyword}".rstrip()
         if url:
-            lines.append(f"[제{chapter_no:02d}장. {chapter_title}]({_canonical_naver_blog_url(url)})")
+            lines.append(f"[제{chapter_no:02d}장. {chapter_title} ↗]({_canonical_naver_blog_url(url)})")
             lines.append(meta)
         else:
             lines.append(f"제{chapter_no:02d}장. {chapter_title}")

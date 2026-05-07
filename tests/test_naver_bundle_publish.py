@@ -1450,10 +1450,10 @@ Q1. 바로 신청해도 되나요?
 
     def test_markdown_to_html_renders_markdown_link_as_anchor(self) -> None:
         html = markdown_to_html(
-            "[제01장. 지금 집을 사야 할까, 청약을 기다려야 할까](https://blog.naver.com/example/az-1)\n"
+            "[제01장. 지금 집을 사야 할까, 청약을 기다려야 할까 ↗](https://blog.naver.com/example/az-1)\n"
         )
 
-        self.assertIn('<a href="https://blog.naver.com/example/az-1" target="_self">제01장. 지금 집을 사야 할까, 청약을 기다려야 할까</a>', html)
+        self.assertIn('<a href="https://blog.naver.com/example/az-1" target="_self">제01장. 지금 집을 사야 할까, 청약을 기다려야 할까 ↗</a>', html)
         self.assertNotIn("](https://blog.naver.com/example/az-1)", html)
 
     def test_inline_markdown_table_is_converted_to_visual_slot(self) -> None:
