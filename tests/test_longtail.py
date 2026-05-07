@@ -1257,6 +1257,12 @@ class LongtailPlannerTest(unittest.TestCase):
         self.assertIn("external_state_uncertain", script)
         self.assertNotIn("publish command timed out", marker_block)
 
+    def test_curriculum_runner_defaults_to_blog_first_without_inline_clip(self) -> None:
+        script = (ROOT / "scripts" / "run_curriculum_daily_publish_prod.sh").read_text(encoding="utf-8")
+
+        self.assertIn('LONGTAIL_BLOG_INLINE_VIDEO="${LONGTAIL_BLOG_INLINE_VIDEO:-0}"', script)
+        self.assertIn("영상/TTS/네이버 클립은 본문 인라인 삽입이 아니라 발행 후 후처리", script)
+
     def test_select_publish_candidate_recovers_stale_rendering_image_bundle(self) -> None:
         replenish_queue(self.db_path, min_queued=30, variants_per_cluster=2)
 
