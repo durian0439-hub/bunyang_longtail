@@ -1041,6 +1041,29 @@ Q1. 바로 신청해도 되나요?
         )
         self.assertNotIn("[규제지역 거주의무와 재당첨 제한 1주택 갈아타기](https://blog.naver.com/example/recent)", markdown)
 
+    def test_build_publish_markdown_inserts_clickable_az_hub_link(self) -> None:
+        _, sections = parse_publish_sections(
+            SPARSE_CASHFLOW_ARTICLE,
+            title_hint="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+        )
+        markdown = target.build_publish_markdown(
+            title="분양 계약금 중도금 잔금, 실제 필요한 현금은 얼마일까?",
+            sections=sections,
+            assets=[],
+            related_links=[
+                {
+                    "category_name": "전체 목차",
+                    "title": "부동산 공부 A-Z 전체 목차",
+                    "url": "https://blog.naver.com/PostView.naver?blogId=example&Redirect=View&logNo=az-hub&categoryNo=16",
+                }
+            ],
+        )
+        html = target.markdown_to_html(markdown)
+
+        self.assertIn("전체 목차 보기\n[부동산 공부 A-Z 전체 목차](https://blog.naver.com/example/az-hub)", markdown)
+        self.assertNotIn("\nhttps://blog.naver.com/example/az-hub\n", markdown)
+        self.assertIn('<a href="https://blog.naver.com/example/az-hub" target="_self">부동산 공부 A-Z 전체 목차</a>', html)
+
     def test_build_publish_markdown_omits_related_placeholder_when_empty(self) -> None:
         _, sections = parse_publish_sections(
             SPARSE_CASHFLOW_ARTICLE,
