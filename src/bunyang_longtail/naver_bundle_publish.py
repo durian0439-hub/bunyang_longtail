@@ -2556,10 +2556,11 @@ def _append_related_blocks(lines: list[str], *, related_links: list[dict[str, st
         for item in cleaned_related:
             if item["category_name"] == "전체 목차":
                 lines.append("전체 목차 보기")
+                lines.append(f"[{item['title']}]({item['url']})")
             else:
                 lines.append(f"{item['category_name']} 최신 글")
-            lines.append(item["title"])
-            lines.append(item["url"])
+                lines.append(item["title"])
+                lines.append(item["url"])
             lines.append("")
 
 
