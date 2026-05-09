@@ -24,6 +24,8 @@
 - 롱테일 A-Z 영상은 `/home/kj/app/video_maker`를 통해 생성한다.
 - 기본 TTS는 video_maker의 `qwen_my_voice_legacy` 프로필을 따른다.
 - 현재 승인된 레퍼런스 음성은 `/home/kj/.local/share/kj-voice/qwen_approved_voice_20260509.wav`이며, 원본 음성 파일은 git에 커밋하지 않는다.
+- 합성 후처리는 video_maker 공통값을 따른다: `silenceremove -45dB`, `stop_silence_sec=0.25`, `pitch_factor=1.015`, `tempo_factor=1.005`, `strategy=asetrate_no_rubberband`.
+- `rubberband`/강한 crisp/공간감 후처리로 자동 fallback하지 않는다.
 
 ## 설계 문서
 - 아키텍처 v2: `docs/ARCHITECTURE_V2.md`
