@@ -77,7 +77,7 @@ def _trim_point(text: str, max_len: int = 62) -> str:
     trimmed = normalized[: max_len - 3].rstrip()
     if " " in trimmed:
         trimmed = trimmed.rsplit(" ", 1)[0]
-    return trimmed.rstrip(" ,") + "..."
+    return trimmed.rstrip(" ,")
 
 
 
@@ -197,7 +197,7 @@ def _draw_thumbnail(
 
     excerpt_source = _summary_source(title, excerpt, article_markdown=article_markdown)
     if len(excerpt_source) > 90:
-        excerpt_source = excerpt_source[:90].rstrip() + "..."
+        excerpt_source = excerpt_source[:90].rstrip()
     excerpt_lines = _fit_lines(draw, excerpt_source, body_font, 440)[:4]
     point_y = 624
     for line in excerpt_lines:

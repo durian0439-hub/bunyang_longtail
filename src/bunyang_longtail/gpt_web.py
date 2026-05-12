@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 import re
@@ -91,6 +93,8 @@ GPT_WEB_GOOGLE_PASSWORD_KEYS = [
     "CHATGPT_GOOGLE_PASSWORD",
     "GOOGLE_LOGIN_PASSWORD",
 ]
+GPT_WEB_GLOBAL_LOCK_DEFAULT = Path("/home/kj/.cache/kj-gpt-web/rate_limit.lock")
+GPT_WEB_GLOBAL_STATE_DEFAULT = Path("/home/kj/.cache/kj-gpt-web/last_request.json")
 GOOGLE_CONTINUE_SELECTORS = [
     'button:has-text("Google로 계속하기")',
     'button:has-text("Google 계정으로 계속하기")',
@@ -256,6 +260,118 @@ def _read_int_env(name: str, default: int, *, minimum: int | None = None, maximu
     if maximum is not None:
         value = min(value, maximum)
     return value
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = _strip_env_quotes(os.getenv(name, ""))
+    if not raw:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_path(name: str, default: Path) -> Path:
+    raw = _strip_env_quotes(os.getenv(name, ""))
+    return Path(raw).expanduser() if raw else default
+
+
+@contextmanager
+def _gpt_web_request_rate_gate(kind: str, artifact_dir: Path | None = None):
+    """Throttle ChatGPT web submissions across local projects.
+
+    Production wrappers opt in with GPT_WEB_GLOBAL_MIN_INTERVAL_SEC. Keeping the
+    default at 0 preserves fast unit tests and manual probes unless an operator
+    explicitly enables the shared guard.
+    """
+    if _env_flag("GPT_WEB_DISABLE_GLOBAL_THROTTLE", False):
+        yield
+        return
+
+    min_interval = _read_int_env("GPT_WEB_GLOBAL_MIN_INTERVAL_SEC", 0, minimum=0, maximum=3600)
+    if min_interval <= 0:
+        yield
+        return
+
+    lock_path = _env_path("GPT_WEB_GLOBAL_LOCK_PATH", GPT_WEB_GLOBAL_LOCK_DEFAULT)
+    state_path = _env_path("GPT_WEB_GLOBAL_STATE_PATH", GPT_WEB_GLOBAL_STATE_DEFAULT)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lock_handle = lock_path.open("a+", encoding="utf-8")
+    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+    started_at = 0.0
+    try:
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            last_started_at = float(state.get("last_started_at") or state.get("ts") or 0.0)
+        except Exception:
+            last_started_at = 0.0
+
+        now = time.time()
+        wait_seconds = max(0.0, last_started_at + min_interval - now)
+        if wait_seconds > 0:
+            if artifact_dir is not None:
+                try:
+                    (artifact_dir / "global_rate_limit_wait.json").write_text(
+                        json.dumps(
+                            {
+                                "kind": kind,
+                                "wait_seconds": round(wait_seconds, 3),
+                                "min_interval_seconds": min_interval,
+                                "state_path": str(state_path),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
+            time.sleep(wait_seconds)
+
+        started_at = time.time()
+        state_path.write_text(
+            json.dumps(
+                {
+                    "kind": kind,
+                    "last_started_at": started_at,
+                    "min_interval_seconds": min_interval,
+                    "pid": os.getpid(),
+                    "project": str(PROJECT_ROOT),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        yield
+    finally:
+        if started_at:
+            try:
+                state_path.write_text(
+                    json.dumps(
+                        {
+                            "kind": kind,
+                            "last_started_at": started_at,
+                            "last_finished_at": time.time(),
+                            "min_interval_seconds": min_interval,
+                            "pid": os.getpid(),
+                            "project": str(PROJECT_ROOT),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
 
 
 
@@ -683,6 +799,9 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             content_format_lines.append("- 피해야 할 형식: " + ", ".join(str(item) for item in avoid_items))
     writing_rules = user_prompt.get("writing_rules", [])
     rule_lines = [f"- {item}" for item in writing_rules]
+    keyword_boost_brief = [str(item) for item in user_prompt.get("keyword_boost_brief") or [] if str(item).strip()]
+    keyword_boost_lines = [f"- {item}" for item in keyword_boost_brief]
+    keyword_boost_block = ["", "네이버 키워드팩:", *keyword_boost_lines] if keyword_boost_lines else []
     data_delivery_requirements = user_prompt.get("data_delivery_requirements", [])
     data_delivery_lines = [f"- {item}" for item in data_delivery_requirements]
     quality_gates = user_prompt.get("quality_gates", [])
@@ -726,6 +845,7 @@ def build_text_prompt(prompt_payload: dict[str, Any]) -> str:
             f"상황: {user_prompt.get('scenario', '')}",
             f"서술 각도: {user_prompt.get('angle', '')}",
             f"각도 규칙: {user_prompt.get('angle_rule', '')}",
+            *keyword_boost_block,
             "",
             "글 형식:",
             *content_format_lines,
@@ -1473,9 +1593,10 @@ def execute_text_job(
                 before_text = ""
         prompt_text = build_text_prompt(_load_json(prompt_payload))
         (artifact_dir / "request_prompt.txt").write_text(prompt_text, encoding="utf-8")
-        _fill_prompt(page, prompt_text)
-        _submit_prompt(page, before_count=before_count)
-        _take_artifacts(page, artifact_dir, "submitted")
+        with _gpt_web_request_rate_gate(f"text:{job_id}", artifact_dir):
+            _fill_prompt(page, prompt_text)
+            _submit_prompt(page, before_count=before_count)
+            _take_artifacts(page, artifact_dir, "submitted")
         article_markdown = _wait_for_text_response(
             page,
             artifact_dir=artifact_dir,
@@ -1572,9 +1693,10 @@ def execute_image_job(
             image_role=image_role,
         )
         (artifact_dir / "request_prompt.txt").write_text(final_prompt, encoding="utf-8")
-        _fill_prompt(page, final_prompt)
-        _submit_prompt(page, before_count=before_count)
-        _take_artifacts(page, artifact_dir, "submitted")
+        with _gpt_web_request_rate_gate(f"image:{job_id}:{image_role}", artifact_dir):
+            _fill_prompt(page, final_prompt)
+            _submit_prompt(page, before_count=before_count)
+            _take_artifacts(page, artifact_dir, "submitted")
         image_result = _wait_for_image_response(
             page,
             artifact_dir=artifact_dir,
