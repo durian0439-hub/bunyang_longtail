@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(os.getenv("BUNYANG_LONGTAIL_ROOT", Path(__file__).resolve().parents[2])).resolve()
 
 from .config import GPT_WEB_ARTIFACT_DIR, OPENAI_COMPAT_ARTIFACT_DIR
+from .keyword_boost_adapter import keyword_engagement_prompt, prepend_keyword_tags, resolve_atoz_keyword_pack
 from .local_image_fallback import _pick_font_path, _summary_source
 
 try:
@@ -326,7 +327,7 @@ def _trim_text(text: str, max_len: int = 72) -> str:
     shortened = normalized[: max_len - 3].rstrip()
     if " " in shortened:
         shortened = shortened.rsplit(" ", 1)[0]
-    return shortened.rstrip(" ,") + "..."
+    return shortened.rstrip(" ,")
 
 
 def _strip_heading_markers(text: str) -> str:
@@ -904,7 +905,7 @@ def _intro_text(sections: list[PublishSection], *, domain: str | None = None) ->
     if not sections:
         return fallback
     source = _summary_source(sections[0].publish_heading, "", article_markdown="\n".join(sections[0].lines))
-    text = _clean(source).replace("...", "").replace("…", "")
+    text = _clean(source).replace("." * 3, "").replace(chr(8230), "")
     if text:
         return text
     return fallback
@@ -1903,7 +1904,7 @@ def _render_gpt_publish_assets(
         )
         attempts = _env_int("NAVER_BLOG_GPT_IMAGE_ATTEMPTS", 3, minimum=1, maximum=5)
         retry_backoff_seconds = _env_int("NAVER_BLOG_GPT_IMAGE_RETRY_BACKOFF_SEC", 20, minimum=0, maximum=300)
-        cooldown_seconds = _env_int("NAVER_BLOG_GPT_IMAGE_COOLDOWN_SEC", 4, minimum=0, maximum=120)
+        cooldown_seconds = _env_int("NAVER_BLOG_GPT_IMAGE_COOLDOWN_SEC", 45, minimum=0, maximum=180)
         last_detail = ""
         for attempt in range(1, attempts + 1):
             cmd = [
@@ -2592,7 +2593,15 @@ def _validate_domain_publish_markdown(markdown: str, *, domain: str | None = Non
         raise ValueError(f"대출 발행 본문에 다른 도메인 용어가 섞였습니다: {', '.join(found)}")
 
 
-def build_publish_markdown(*, title: str, sections: list[PublishSection], assets: list[PublishAsset], related_links: list[dict[str, str]] | None = None, domain: str | None = None) -> str:
+def build_publish_markdown(
+    *,
+    title: str,
+    sections: list[PublishSection],
+    assets: list[PublishAsset],
+    related_links: list[dict[str, str]] | None = None,
+    domain: str | None = None,
+    keyword_pack: dict[str, Any] | None = None,
+) -> str:
     lines: list[str] = [f"# {title}", ""]
 
     slot_to_indexes: dict[str, list[int]] = {}
@@ -2648,13 +2657,17 @@ def build_publish_markdown(*, title: str, sections: list[PublishSection], assets
     else:
         lines.append("일정과 비용은 수집 시점 기준일 수 있으니, 계약 전에는 입주자모집공고와 사업주체 안내로 다시 확인해보시기 바랍니다.")
     lines.append("")
+    engagement_prompt = keyword_engagement_prompt(keyword_pack)
+    if engagement_prompt:
+        lines.append(engagement_prompt)
+        lines.append("")
     _append_lead_cta_block(lines, domain=content_domain)
     lines.append("")
     _append_related_blocks(lines, related_links=related_links, domain=_content_domain(title, domain))
     return "\n".join(lines).strip() + "\n"
 
 
-def default_tags(title: str, *, domain: str | None = None) -> list[str]:
+def default_tags(title: str, *, domain: str | None = None, keyword_pack: dict[str, Any] | None = None) -> list[str]:
     content_domain = _content_domain(title, domain)
     text = _clean(title)
     if content_domain == "auction":
@@ -2716,7 +2729,7 @@ def default_tags(title: str, *, domain: str | None = None) -> list[str]:
             continue
         seen.add(cleaned)
         ordered.append(cleaned)
-    return ordered[:NAVER_TAG_LIMIT]
+    return prepend_keyword_tags(ordered, keyword_pack, limit=NAVER_TAG_LIMIT) if keyword_pack else ordered[:NAVER_TAG_LIMIT]
 
 
 def _inline_markdown_links(line: str) -> str:
@@ -2828,6 +2841,11 @@ def build_publish_bundle(
     original_title, sections = parse_publish_sections(prepared_article, title_hint=variant_title, domain=content_domain)
     publish_title = title_override or build_publish_title(variant_title or original_title)
     content_domain = _content_domain(publish_title, content_domain)
+    keyword_pack = resolve_atoz_keyword_pack(
+        title=publish_title or variant_title or original_title,
+        article_markdown=prepared_article,
+        domain=content_domain,
+    )
     output_dir = Path(output_root).resolve()
     images_dir = output_dir / "images"
     sections, inline_table_specs = _extract_inline_markdown_table_specs(sections)
@@ -2844,10 +2862,17 @@ def build_publish_bundle(
         PublishAsset(slot=asset.slot, kind=asset.kind, label=asset.label, path=_ensure_publish_asset_min_side(asset.path, min_publish_side_px))
         for asset in asset_result.assets
     ]
-    markdown = build_publish_markdown(title=publish_title, sections=sections, assets=assets, related_links=related_links, domain=content_domain)
+    markdown = build_publish_markdown(
+        title=publish_title,
+        sections=sections,
+        assets=assets,
+        related_links=related_links,
+        domain=content_domain,
+        keyword_pack=keyword_pack,
+    )
     _validate_domain_publish_markdown(markdown, domain=content_domain)
     body_html = markdown_to_html(markdown)
-    tags = default_tags(publish_title, domain=content_domain)
+    tags = default_tags(publish_title, domain=content_domain, keyword_pack=keyword_pack)
     apt_id = f"longtail-bundle-{bundle_id}"
     meta = {
         "bundle_id": bundle_id,
@@ -2858,6 +2883,7 @@ def build_publish_bundle(
         "image_provider": asset_result.image_provider,
         "image_provider_requested": asset_result.image_provider_requested,
         "domain": content_domain,
+        "keyword_boost_pack": keyword_pack,
     }
     if asset_result.image_provider_fallback_from:
         meta["image_provider_fallback_from"] = asset_result.image_provider_fallback_from

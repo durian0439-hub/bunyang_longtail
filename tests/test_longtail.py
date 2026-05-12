@@ -7,6 +7,7 @@ import re
 import sqlite3
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -50,6 +51,7 @@ from bunyang_longtail.gpt_web import (
     GptWebExecutionError,
     _classify_launch_failure_message,
     _detect_page_state,
+    _gpt_web_request_rate_gate,
     _has_new_generated_image,
     _looks_like_complete_article,
     _looks_like_generated_image_src,
@@ -2296,6 +2298,36 @@ DSR 부담이 줄어드는 경우가 있어 은행 상담에서 확인합니다.
 
             self.assertEqual(exc_info.exception.code, "GPT_WEB_RATE_LIMIT")
             self.assertFalse(cooldown_path.exists())
+
+    def test_gpt_web_request_rate_gate_waits_between_requests(self) -> None:
+        artifact_dir = Path(self.tmpdir.name) / "global_rate_artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = Path(self.tmpdir.name) / "global_rate.lock"
+        state_path = Path(self.tmpdir.name) / "global_rate.json"
+        state_path.write_text(
+            json.dumps({"last_started_at": time.time()}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "GPT_WEB_GLOBAL_MIN_INTERVAL_SEC": "90",
+                "GPT_WEB_GLOBAL_LOCK_PATH": str(lock_path),
+                "GPT_WEB_GLOBAL_STATE_PATH": str(state_path),
+            },
+        ), patch("bunyang_longtail.gpt_web.time.sleep") as sleep_mock:
+            with _gpt_web_request_rate_gate("image:test", artifact_dir):
+                pass
+
+        self.assertTrue(sleep_mock.called)
+        waited = float(sleep_mock.call_args.args[0])
+        self.assertGreater(waited, 80)
+        self.assertLessEqual(waited, 90)
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["kind"], "image:test")
+        self.assertEqual(state["min_interval_seconds"], 90)
+        self.assertTrue((artifact_dir / "global_rate_limit_wait.json").exists())
 
     def test_summary_source_uses_article_body_when_excerpt_is_placeholder(self) -> None:
         article_markdown = "# 제목\n\n상단 요약\n\n30대 맞벌이도 일반공급 1순위는 충분히 가능할 수 있습니다.\n\nFAQ"

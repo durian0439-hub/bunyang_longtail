@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from .catalog import ANGLE_PROMPTS, AUCTION_DOMAIN, DEFAULT_DOMAIN, LOAN_DOMAIN, NAVER_SEO_SECTIONS, TAX_DOMAIN
+from .keyword_boost_adapter import has_keyword_boost, keyword_prompt_lines, resolve_atoz_keyword_pack
 
 
 LONGTAIL_INFO_BLOG_FORMAT = {
@@ -117,6 +118,7 @@ def _search_friendly_blog_style_rules(domain: str) -> list[str]:
 def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> dict[str, Any]:
     domain = str(cluster.get("domain") or DEFAULT_DOMAIN)
     outline = json.loads(cluster["outline_json"])
+    keyword_pack = resolve_atoz_keyword_pack(cluster=cluster, variant=variant, domain=domain)
     system_prompt = (
         "당신은 청약 전문 네이버 블로그 에디터이자 상위 노출 블로그를 많이 본 실전형 작가입니다. "
         "목표는 검색 사용자가 제목을 클릭한 뒤 10초 안에 자기 상황과 답을 파악하게 만드는 것입니다. "
@@ -189,7 +191,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
             "FAQ 답변을 '그렇습니다.' 같은 한 단어 단정형으로 시작하지 말고, 바로 핵심 이유나 조건부터 설명합니다.",
             "너무 반듯한 요약문만 이어지지 않도록, 중간중간 '많이 헷갈리는 지점은', '실제로는 여기서 갈립니다', '이 부분에서 실수가 자주 나옵니다' 같은 자연스러운 연결 표현을 제한적으로 활용합니다.",
             "본문 끝에는 어떤 독자에게 더 적합한지 한 줄 행동 가이드를 넣습니다.",
-            "말줄임표(...)를 쓰지 않고, 문장을 중간에서 흐리지 않습니다.",
+            "말줄임표를 쓰지 않고, 길면 문장을 끊어 새 문장이나 새 줄로 이어 씁니다.",
             "중요하다, 필요하다, 가능하다로만 끝내지 말고 그 이유나 조건을 같은 문장 또는 바로 다음 문장에서 끝까지 설명합니다.",
             "이 규칙은 도입부만이 아니라 글 전체에 적용합니다. 문장을 열어놓고 독자가 뜻을 추정하게 두지 않습니다.",
             "'일시적 2주택 관리 싸움', '출구 규정', '일정 규정', '다음 선택지 규정'처럼 억지로 개념화한 표현은 쓰지 않습니다. 실제 독자가 바로 이해할 생활 언어로 풉니다.",
@@ -220,7 +222,7 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
             "도입부에서 같은 상황 표현을 두 번 반복하면 실패입니다.",
             "도입부와 초반 섹션에 질문 불릿이 과도하게 몰리면 실패입니다.",
             "'정리하면 조건부로 가능합니다', '끝까지 설명할 수 있는지가', '편이 더 유리합니다' 같은 메타 문장이 나오면 실패입니다.",
-            "말줄임표(...)가 나오면 실패입니다.",
+            "말줄임표가 나오면 실패입니다.",
             "'중요합니다', '필요합니다', '가능합니다', '불리합니다' 같은 짧은 단정형 문장만 던지고 이유를 생략하면 실패입니다.",
             "'정리하면', '결론만 말하면', '쉽게 말해'처럼 문장을 열어놓고 설명을 빼먹는 표현이 나오면 실패입니다.",
             "'일시적 2주택 관리 싸움', '출구 규정', '일정 규정', '다음 선택지 규정'처럼 어색한 개념화 표현이 나오면 실패입니다.",
@@ -240,18 +242,17 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
             "title": "검색어는 살리되 쉼표 나열 없이 자연스럽고 짧은 제목 1개",
             "excerpt": "상단 요약 문단을 다시 압축한 2~3문장 설명. 헤딩 문구 없이 바로 문장으로만 작성",
             "sections": [
-                {"heading": "상단 요약", "body": "..."},
-                {"heading": "이 글에서 바로 답하는 질문", "body": "..."},
-                {"heading": "핵심 조건 정리", "body": "..."},
-                {"heading": "헷갈리기 쉬운 예외", "body": "..."},
-                {"heading": "실전 예시 시나리오", "body": "..."},
-                {"heading": "체크리스트", "body": "..."},
+                {"heading": "상단 요약", "body": "본문 작성"},
+                {"heading": "이 글에서 바로 답하는 질문", "body": "본문 작성"},
+                {"heading": "핵심 조건 정리", "body": "본문 작성"},
+                {"heading": "헷갈리기 쉬운 예외", "body": "본문 작성"},
+                {"heading": "실전 예시 시나리오", "body": "본문 작성"},
+                {"heading": "체크리스트", "body": "본문 작성"},
                 {"heading": "FAQ", "body": "질문 6개 이상"},
                 {"heading": "마무리 결론", "body": "청약 전 최종판단 또는 도메인별 최종판단 코너처럼 대상자별 다음 행동을 분리해 작성"},
             ],
         },
     }
-
     if domain == AUCTION_DOMAIN:
         system_prompt = (
             "당신은 부동산 경매 전문 네이버 블로그 에디터이자, 경매 초보가 입찰 전에 위험을 걸러낼 수 있게 돕는 실전형 작가입니다. "
@@ -396,5 +397,15 @@ def build_prompt_package(cluster: dict[str, Any], variant: dict[str, Any]) -> di
             "seo": "제목, 소제목, FAQ에서 부동산 대출 검색 의도가 자연스럽게 드러나는 구조",
             "readability": "중간 소제목과 첫 문장만 읽어도 대출 확인 순서가 보이는 구조",
         }
+
+    if has_keyword_boost(keyword_pack):
+        user_prompt["keyword_boost_pack"] = keyword_pack
+        user_prompt["keyword_boost_brief"] = keyword_prompt_lines(keyword_pack)
+        user_prompt["writing_rules"].append(
+            "네이버 키워드팩의 대표 검색어와 소제목 후보는 제목·도입·소제목·FAQ에 자연스럽게 섞습니다. 문장이 어색해지면 키워드 반복보다 사람이 쓰는 표현을 우선합니다."
+        )
+        user_prompt["quality_gates"].append(
+            "네이버 키워드팩을 넣더라도 키워드만 반복하는 문장, 조사나 띄어쓰기가 어색한 문장, 실제 사람이 잘 쓰지 않는 표현이 나오면 실패입니다."
+        )
 
     return {"system": system_prompt, "user": user_prompt}
