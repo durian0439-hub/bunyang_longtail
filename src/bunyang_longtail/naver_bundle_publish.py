@@ -3163,6 +3163,66 @@ def _longtail_blog_category(domain: str | None, fallback: str | None = None) -> 
 LONGTAIL_VIDEO_QA_FREEZE = False  # 2026-04-30: 영상/TTS/썸네일 보정 후 운영 재개
 
 
+def _longtail_video_timeout_seconds() -> int:
+    return _env_int("LONGTAIL_VIDEO_TIMEOUT_SEC", 1200, minimum=60)
+
+
+def _timeout_stream_tail(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "ignore")[-4000:]
+    return str(value)[-4000:]
+
+
+def _run_longtail_video_command(
+    cmd: list[str],
+    *,
+    video_maker_root: Path,
+    output_dir: Path,
+    strict_env: str,
+    strict_error: str,
+) -> tuple[dict[str, Any] | None, str, str]:
+    timeout_seconds = _longtail_video_timeout_seconds()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(video_maker_root),
+            env={**os.environ, "PYTHONPATH": "."},
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        payload = {
+            "status": "timeout",
+            "reason": "longtail_video_timeout",
+            "returncode": 124,
+            "timeout_seconds": timeout_seconds,
+            "stdout_tail": _timeout_stream_tail(getattr(exc, "stdout", None)),
+            "stderr_tail": _timeout_stream_tail(getattr(exc, "stderr", None)),
+            "output_dir": str(output_dir),
+        }
+        if _env_flag(strict_env, default=False):
+            raise RuntimeError(strict_error + "\n" + json.dumps(payload, ensure_ascii=False, indent=2)) from exc
+        return payload, "", ""
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode != 0:
+        payload = {
+            "status": "error",
+            "returncode": proc.returncode,
+            "stdout_tail": stdout[-4000:],
+            "stderr_tail": stderr[-4000:],
+            "output_dir": str(output_dir),
+        }
+        if _env_flag(strict_env, default=False):
+            raise RuntimeError(strict_error + "\n" + json.dumps(payload, ensure_ascii=False, indent=2))
+        return payload, stdout, stderr
+    return None, stdout, stderr
+
+
 def _render_longtail_video_for_blog(
     *,
     publish_bundle: PublishBundle,
@@ -3222,27 +3282,15 @@ def _render_longtail_video_for_blog(
         if _env_flag("LONGTAIL_VIDEO_TTS_STRICT", default=False):
             cmd.append("--tts-strict")
 
-    proc = subprocess.run(
+    error_payload, stdout, _stderr = _run_longtail_video_command(
         cmd,
-        cwd=str(video_maker_root),
-        env={**os.environ, "PYTHONPATH": "."},
-        capture_output=True,
-        text=True,
-        timeout=int(str(os.getenv("LONGTAIL_VIDEO_TIMEOUT_SEC", "3600")).strip() or "3600"),
+        video_maker_root=video_maker_root,
+        output_dir=output_dir,
+        strict_env="LONGTAIL_BLOG_INLINE_VIDEO_STRICT",
+        strict_error="longtail_blog_inline_video_render_failed",
     )
-    stdout = (proc.stdout or "").strip()
-    stderr = (proc.stderr or "").strip()
-    if proc.returncode != 0:
-        payload = {
-            "status": "error",
-            "returncode": proc.returncode,
-            "stdout_tail": stdout[-4000:],
-            "stderr_tail": stderr[-4000:],
-            "output_dir": str(output_dir),
-        }
-        if _env_flag("LONGTAIL_BLOG_INLINE_VIDEO_STRICT", default=False):
-            raise RuntimeError("longtail_blog_inline_video_render_failed\n" + json.dumps(payload, ensure_ascii=False, indent=2))
-        return payload
+    if error_payload is not None:
+        return error_payload
     lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     if not lines:
         return {"status": "error", "reason": "missing video render stdout", "output_dir": str(output_dir)}
@@ -3333,27 +3381,15 @@ def _maybe_publish_longtail_video(
             clip_visibility = "public"
         cmd.extend(["--upload-naver-clip", "--naver-clip-visibility", clip_visibility])
 
-    proc = subprocess.run(
+    error_payload, stdout, _stderr = _run_longtail_video_command(
         cmd,
-        cwd=str(video_maker_root),
-        env={**os.environ, "PYTHONPATH": "."},
-        capture_output=True,
-        text=True,
-        timeout=int(str(os.getenv("LONGTAIL_VIDEO_TIMEOUT_SEC", "3600")).strip() or "3600"),
+        video_maker_root=video_maker_root,
+        output_dir=output_dir,
+        strict_env="LONGTAIL_VIDEO_STRICT",
+        strict_error="longtail_video_publish_failed",
     )
-    stdout = (proc.stdout or "").strip()
-    stderr = (proc.stderr or "").strip()
-    if proc.returncode != 0:
-        payload = {
-            "status": "error",
-            "returncode": proc.returncode,
-            "stdout_tail": stdout[-4000:],
-            "stderr_tail": stderr[-4000:],
-            "output_dir": str(output_dir),
-        }
-        if _env_flag("LONGTAIL_VIDEO_STRICT", default=False):
-            raise RuntimeError("longtail_video_publish_failed\n" + json.dumps(payload, ensure_ascii=False, indent=2))
-        return payload
+    if error_payload is not None:
+        return error_payload
 
     lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     if not lines:
