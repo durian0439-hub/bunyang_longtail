@@ -816,6 +816,56 @@ A. 서류와 현장을 다시 확인해야 합니다.
         self.assertNotIn("longtail_video_qa_freeze", json.dumps(result, ensure_ascii=False))
         self.assertEqual(seen_publish_kwargs["videos"], [])
 
+    def test_longtail_video_publish_timeout_is_recorded_without_breaking_blog_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta_path = Path(tmpdir) / "publish_bundle.json"
+            meta_path.write_text(
+                json.dumps({"bundle_id": 77, "domain": "cheongyak", "title": "청약 영상 타임아웃", "images": [], "tags": ["청약"]}),
+                encoding="utf-8",
+            )
+            bundle = target.PublishBundle(
+                apt_id="longtail-bundle-77",
+                title="청약 영상 타임아웃",
+                markdown="본문",
+                images=[],
+                tags=["청약"],
+                body_html="<p>본문</p>",
+                meta_path=str(meta_path),
+                assets=[],
+                image_provider="gpt_web",
+                image_provider_requested="gpt_web",
+            )
+
+            timeout_exc = target.subprocess.TimeoutExpired(
+                cmd=["publish_project_video"],
+                timeout=60,
+                output="partial stdout",
+                stderr="still rendering",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "LONGTAIL_VIDEO_UPLOAD": "1",
+                    "LONGTAIL_VIDEO_TIMEOUT_SEC": "60",
+                    "LONGTAIL_NAVER_CLIP_UPLOAD": "1",
+                    "LONGTAIL_VIDEO_STRICT": "0",
+                    "LONGTAIL_VIDEO_MAKER_ROOT": "/home/kj/app/video_maker",
+                },
+            ), patch.object(target.subprocess, "run", side_effect=timeout_exc) as run_mock:
+                result = target._maybe_publish_longtail_video(
+                    publish_bundle=bundle,
+                    publish_result={"current_url": "https://blog.naver.com/bear0439/77"},
+                    category_name="How To 분양",
+                )
+
+        self.assertEqual(result["status"], "timeout")
+        self.assertEqual(result["reason"], "longtail_video_timeout")
+        self.assertEqual(result["returncode"], 124)
+        self.assertEqual(result["timeout_seconds"], 60)
+        self.assertIn("partial stdout", result["stdout_tail"])
+        self.assertIn("still rendering", result["stderr_tail"])
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 60)
+
     def test_publish_bundle_to_naver_reuses_existing_clip_after_blog_first_retry(self) -> None:
         fake_src = types.ModuleType("src")
         fake_publisher = types.ModuleType("src.publisher")
