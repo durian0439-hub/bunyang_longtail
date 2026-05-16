@@ -332,7 +332,7 @@ class LongtailPlannerTest(unittest.TestCase):
         fake_publisher = types.ModuleType("src.publisher")
         fake_naver = types.ModuleType("src.publisher.naver_playwright")
 
-        def fake_publish(apt_id, title, body_html, images, mode="draft", out="outputs/publish", body_markdown=None, tags=None, videos=None, write_url=None, clip_urls=None):
+        def fake_publish(apt_id, title, body_html, images, mode="draft", out="outputs/publish", body_markdown=None, tags=None, videos=None, write_url=None, clip_urls=None, notice=False):
             calls.append(
                 {
                     "apt_id": apt_id,
@@ -343,6 +343,7 @@ class LongtailPlannerTest(unittest.TestCase):
                     "body_markdown": body_markdown,
                     "tags": tags,
                     "write_url": write_url,
+                    "notice": notice,
                 }
             )
             Path(out).mkdir(parents=True, exist_ok=True)
@@ -362,7 +363,10 @@ class LongtailPlannerTest(unittest.TestCase):
             )
             self.assertTrue(first["ok"])
             self.assertIsNone(calls[-1]["write_url"])
-            self.assertEqual(calls[-1]["images"], [])
+            self.assertEqual(len(calls[-1]["images"]), 1)
+            self.assertTrue(Path(calls[-1]["images"][0]).exists())
+            self.assertIn("[[IMAGE:1]]", str(calls[-1]["body_markdown"]))
+            self.assertTrue(calls[-1]["notice"])
             self.assertIn("부동산 공부 A-Z 전체 목차", str(calls[-1]["body_markdown"]))
 
             mark_published(self.db_path, list_curriculum_plan(self.db_path, limit=1)[0]["variant_id"], "https://blog.naver.com/example/az-1")

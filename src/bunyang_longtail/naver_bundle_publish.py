@@ -1102,6 +1102,77 @@ def render_thumbnail_image(*, title: str, sections: list[PublishSection], output
     return str(output)
 
 
+def render_curriculum_hub_thumbnail_image(
+    *,
+    title: str,
+    output_path: str | Path,
+    linked_count: int | None = None,
+    total_count: int | None = None,
+) -> str:
+    """Render the fixed A-Z hub thumbnail used by the notice/table-of-contents post."""
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    width = height = 1080
+    image = Image.new("RGB", (width, height), "#EEF2FF")
+    draw = ImageDraw.Draw(image)
+
+    for y in range(height):
+        top = (248, 250, 252)
+        bottom = (224, 231, 255)
+        ratio = y / height
+        color = tuple(int(top[idx] * (1 - ratio) + bottom[idx] * ratio) for idx in range(3))
+        draw.line((0, y, width, y), fill=color)
+
+    accent = "#4338CA"
+    soft = "#EEF2FF"
+    draw.rounded_rectangle((52, 52, 1028, 1028), radius=42, fill="white", outline="#D7E5F5", width=3)
+    draw.rounded_rectangle((88, 88, 292, 142), radius=22, fill="#0F172A")
+    draw.text((190, 115), "부동산 A-Z", fill="white", font=_font(30), anchor="mm")
+
+    title_lines = _fit_lines(draw, _clean(title) or "부동산 공부 A-Z 전체 목차", max_width=660, font_size=58, max_lines=3)
+    y = 192
+    for idx, line in enumerate(title_lines):
+        draw.text((92, y), line, fill=accent if idx == len(title_lines) - 1 else "#0F172A", font=_font(58))
+        y += 74
+
+    progress_text = "청약·분양·대출·세금·경매를 순서대로 읽는 목차"
+    if total_count:
+        safe_linked = max(0, int(linked_count or 0))
+        safe_total = max(0, int(total_count or 0))
+        progress_text = f"발행 진행률 {safe_linked}/{safe_total} · 새 글마다 자동 업데이트"
+    summary_lines = _fit_lines(draw, progress_text, max_width=760, font_size=32, max_lines=2)
+    draw.rounded_rectangle((92, 450, 988, 592), radius=28, fill=soft, outline="#DCE7F6", width=2)
+    sy = 492
+    for line in summary_lines:
+        draw.text((120, sy), line, fill="#334155", font=_font(32))
+        sy += 44
+
+    chips = ["청약·분양", "대출·세금", "경매", "최종 체크"]
+    for idx, chip in enumerate(chips):
+        x1 = 92 + (idx % 2) * 454
+        y1 = 650 + (idx // 2) * 92
+        x2 = x1 + 402
+        y2 = y1 + 62
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=20, fill="#F8FAFC", outline="#CBD5E1", width=2)
+        draw.text((x1 + 201, y1 + 31), chip, fill=accent, font=_font(30), anchor="mm")
+
+    draw.rounded_rectangle((92, 878, 988, 946), radius=26, fill=accent)
+    draw.text((540, 912), "전체 목차 보기", fill="white", font=_font(34), anchor="mm")
+
+    # simple book/check icon
+    draw.rounded_rectangle((760, 184, 958, 360), radius=24, fill="#F8FAFC", outline=accent, width=6)
+    draw.line((800, 232, 918, 232), fill="#94A3B8", width=8)
+    draw.line((800, 278, 900, 278), fill="#94A3B8", width=8)
+    draw.line((800, 324, 870, 324), fill="#94A3B8", width=8)
+    draw.ellipse((908, 318, 988, 398), fill=accent)
+    draw.line((932, 354, 950, 372), fill="white", width=8)
+    draw.line((950, 372, 978, 332), fill="white", width=8)
+
+    image.save(output)
+    return str(output)
+
+
 def render_soft_illustration_image(*, title: str, label: str, output_path: str | Path) -> str:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -2557,7 +2628,11 @@ def _append_related_blocks(lines: list[str], *, related_links: list[dict[str, st
         for item in cleaned_related:
             if item["category_name"] == "전체 목차":
                 lines.append("전체 목차 보기")
-                lines.append(f"[{item['title']}]({item['url']})")
+                lines.append(item["title"])
+                # 네이버 에디터는 단독 URL을 붙여 넣으면 썸네일이 있는 OGP 카드로
+                # 변환한다. 목차 공지글은 publish_curriculum_hub_to_naver에서
+                # 대표 이미지를 보강하므로, 본문 하단에는 카드형 링크가 뜨게 둔다.
+                lines.append(item["url"])
             else:
                 lines.append(f"{item['category_name']} 최신 글")
                 lines.append(item["title"])

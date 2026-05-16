@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .curriculum import CURRICULUM_TRACK_KEY, mark_curriculum_hub_synced, refresh_curriculum_hub_post, set_curriculum_hub_url
-from .naver_bundle_publish import default_tags, markdown_to_html
+from .naver_bundle_publish import default_tags, markdown_to_html, render_curriculum_hub_thumbnail_image
 
 
 def _clean(value: Any) -> str:
@@ -53,6 +53,17 @@ def _hub_tags(title: str) -> list[str]:
     return tags[:30]
 
 
+def _insert_lead_image_marker(markdown: str, image_index: int = 1) -> str:
+    marker = f"[[IMAGE:{image_index}]]"
+    lines = str(markdown or "").splitlines()
+    if marker in {line.strip() for line in lines}:
+        return str(markdown or "")
+    if lines and lines[0].startswith("# "):
+        lines[1:1] = ["", marker, ""]
+        return "\n".join(lines).strip() + "\n"
+    return f"{marker}\n\n{str(markdown or '').strip()}\n"
+
+
 def publish_curriculum_hub_to_naver(
     *,
     db_path: str | Path,
@@ -69,11 +80,18 @@ def publish_curriculum_hub_to_naver(
     if not markdown.strip():
         raise RuntimeError("목차 허브 본문이 비어 있습니다.")
 
-    body_html = markdown_to_html(markdown)
     apt_id = f"curriculum-hub-{hub['id']}"
     output_dir = Path(output_root).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "body.md").write_text(markdown, encoding="utf-8")
+    thumbnail_path = render_curriculum_hub_thumbnail_image(
+        title=title,
+        output_path=output_dir / "images" / "00_curriculum_hub_thumbnail.png",
+        linked_count=int(hub.get("linked_node_count") or 0),
+        total_count=int(hub.get("total_node_count") or 0),
+    )
+    publish_markdown = _insert_lead_image_marker(markdown, 1)
+    body_html = markdown_to_html(publish_markdown)
+    (output_dir / "body.md").write_text(publish_markdown, encoding="utf-8")
     (output_dir / "body.html").write_text(body_html, encoding="utf-8")
     meta = {
         "hub_id": hub["id"],
@@ -86,6 +104,7 @@ def publish_curriculum_hub_to_naver(
         "mode": mode,
         "category_no": category_no,
         "category_name": category_name,
+        "images": [str(Path(thumbnail_path).resolve())],
         "note": "네이버 공지/고정글로 쓰는 A-Z 전체 목차 허브글입니다.",
     }
     (output_dir / "publish_bundle.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -113,12 +132,13 @@ def publish_curriculum_hub_to_naver(
             apt_id,
             title,
             body_html,
-            [],
+            [thumbnail_path],
             mode=mode,
             out=str(out_dir),
-            body_markdown=markdown,
+            body_markdown=publish_markdown,
             tags=_hub_tags(title),
             write_url=write_url or None,
+            notice=True,
         )
     finally:
         for key, value in previous_env.items():
